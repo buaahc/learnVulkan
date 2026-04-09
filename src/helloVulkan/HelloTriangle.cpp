@@ -1048,12 +1048,21 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     pipelineInfo.renderPass = this->_renderPass;
     pipelineInfo.subpass = 0;
 
-    //现有管道和继承管道
+    //继承某个管线
+    /**
+    * 创建管线是一个非常消耗 CPU 性能的操作,Vulkan 中只要状态（哪怕只是一个深度测试开关）不一样，就必须创建一个全新的图形管线（VkPipeline）,
+    * 如果两个管线A/B 99%的状态（着色器、顶点格式、混合模式）完全一模一样。
+    * 如果你从头开始分别创建 A 和 B，驱动程序可能会做很多重复的苦力活。
+    * 利用管线派生，你可以告诉驱动：“我要创建管线 B，它大部分状态和管线 A 一样，你直接把管线 A 复制过来，只改一下线框模式就行了。” 
+    * 这样可以大大加快管线 B 的创建速度，并可能节省显存。
+    * 但是vkCreateGraphicsPipelines的第二个参数pipelineCache管道缓存，比管道继承更先进。
+    */
     pipelineInfo.basePipelineHandle = VK_NULL_HANDLE; // Optional
     pipelineInfo.basePipelineIndex = -1; // Optional
 
     //创建渲染管线
     //pipelineCache-管道缓存可用于存储和重用与管道创建相关的数据，以便在多次调用 vkCreateGraphicsPipelines甚至程序执行之间重复使用
+    //pipelineCache管道缓存比上面的管线继承更先进，管线缓存不仅能实现类似于派生的性能优化，还能把编译好的管线保存到硬盘上，下次玩家启动游戏时直接读取，实现真正的“秒开
     if (vkCreateGraphicsPipelines(this->_logicDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &this->_graphicsPipeline) != VK_SUCCESS) {
         throw std::runtime_error("failed to create graphics pipeline!");
     }
