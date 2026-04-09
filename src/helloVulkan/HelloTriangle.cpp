@@ -70,6 +70,7 @@ void HelloTriangleApplication::initVulkan() {
     this->createImageViews();
     //创建渲染通道-渲染附件-子通道-就是对应openGL的renderPass
     this->createRenderPass();
+    //提前烘焙的vulkan状态机（类似与openGL状态机，除了少量的动态状态外，渲染过程中几乎不允许修改）
     this->createGraphicsPipeline();
     this->createFramebuffers();
     this->createCommandPool();
@@ -862,7 +863,13 @@ void HelloTriangleApplication::createRenderPass()
     }
 }
 
-//关键步骤九：创建图形挂管线
+//关键步骤九：创建图形管线vkPipeline-每个vkPipeline对应一个subPass（真正代码执行的地方）,vkPipeline就是在绘制之前把所有的状态设置好，绘制过程中几乎不允许修改-可以理解为vulkan状态机
+/**
+* 在 Vulkan 中，图形管线是一个极其庞大的状态机,与OpenGL可以在绘制时随时改变状态（如随时开关深度测试、改变混合模式）不同，
+* Vulkan 要求你在绘制前把几乎所有的状态（着色器、混合模式、光栅化设置等）提前打包“烘焙”成一个不可变的对象，绘制过程中不可修改，
+* 这就是图形管线（VkPipeline）,这样做是为了最大化 GPU 的运行效率。
+* 渲染管线就是为subpass提前设置好的状态机（状态机快照），在绘制模型时绑定（启动）渲染管线，那这些状态都会起作用，然后绘制模型（可以理解为opengl状态机，但是几乎不允许实时修改，仅少量的动态状态可修改）
+*/
 //9.1-着色器相关--读取着色器字节码信息，保存在VkShaderModule
 VkShaderModule HelloTriangleApplication::createShaderModule(const std::vector<char>& code) {
     VkShaderModuleCreateInfo createInfo{};
@@ -876,10 +883,28 @@ VkShaderModule HelloTriangleApplication::createShaderModule(const std::vector<ch
     return shaderModule;
 }
 
-//9.2-创建图形管线
+//9.2-创建图形管线vkPipeline--对应于subpass，需要为每个subpass创建对应的图形管线;
+//图形管线（VkPipeline）在创建时，必须严格绑定到一个特定的 Render Pass 里的某一个特定的 Subpass 上;
+/**
+* 一个renderPass（工厂）可以包含多个subpass（工序，Subpass 0 负责画几何体，Subpass 1 负责光照计算，Subpass 2 负责 UI）,
+* 一个VkPipeline（工人） 只能绑定在一个Subpass上,
+* 一个Subpass可能对应多个vkPipeline：假设你在 Subpass 0（渲染几何体） 中，既要画一个不透明的木箱子，又要画一个半透明的玻璃窗。
+* 木箱子不需要混合，玻璃窗需要颜色混合；木箱子用一套着色器，玻璃窗用另一套着色器。
+* 这个时候，单单针对 Subpass 0，你就需要创建 2 个图形管线：
+* 管线 A：关闭混合，绑定箱子的着色器，subpass = 0。
+* 管线 B：开启混合，绑定玻璃的着色器，subpass = 0。
+* 同一个subpass里面绘制的物体，只要使用不同的着色器，混合模式，深度测试/写入状态，光栅化状态，顶点数据结构大变等都需要新建管线，所以一个subpass可以对应多个vkpipeline
+*/
+
+/**
+* 总结：
+* 1个Render Pass包含N个Subpass;
+* 1个Subpass可以包含N个vkPipeline（用于画不同的材质、物体）;
+* 1个Pipeline只能严格属于1个特定的Subpass，它绝不能跨界;
+*/
 void HelloTriangleApplication::createGraphicsPipeline() {
-    //auto vertShaderCode = readFile("D:/learnVulkan/shaders/vert.spv");
-    //auto fragShaderCode = readFile("D:/learnVulkan/shaders/frag.spv")
+    
+    //1-配置着色器
     std::string exeDir = getExeDirectory();
     std::cout << "EXE 所在目录: " << exeDir << std::endl;
     auto vertShaderCode = readFile(exeDir + "/shaders/vert.spv");
@@ -894,18 +919,18 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
     vertShaderStageInfo.module = vertShaderModule;
-    vertShaderStageInfo.pName = "main";
+    vertShaderStageInfo.pName = "main";//着色器的入口函数
 
     //片元着色器
     VkPipelineShaderStageCreateInfo fragShaderStageInfo{};
     fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
     fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
     fragShaderStageInfo.module = fragShaderModule;
-    fragShaderStageInfo.pName = "main";
+    fragShaderStageInfo.pName = "main";//着色器的入口函数
 
     VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
-    //固定管线功能
+    //2-配置固定管线功能
     //顶点输入--描述了将传递给顶点着色器的顶点数据的格式
     /*
     * 绑定：数据之间的间距以及数据是按顶点还是按实例（参见实例化）
@@ -913,8 +938,16 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     */
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertexInputInfo.vertexBindingDescriptionCount = 0;
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;
+    //把包含顶点数据的内存块（VkBuffer）绑定到管线上，
+    //一个 Binding 描述了整个数据块的总体特征：比如相邻两个顶点之间的字节间距（Stride 是多少），
+    //以及数据是逐个顶点提取，还是逐个实例（Instance）提取。这里为 0 说明我们没有绑定任何外部缓冲区。
+    vertexInputInfo.vertexBindingDescriptionCount = 0;//绑定的数据
+    vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
+    // Attribute（属性）？：一个顶点通常包含多种信息，比如位置（x,y,z）、颜色（r,g,b）、纹理坐标（u,v）等。
+    // 这些具体的细节就是属性。属性描述用来告诉 GPU：“位置信息在这个数据块的第 0 个字节，类型是 vec3；颜色信息在第 12 个字节，类型也是 vec3”。
+    vertexInputInfo.vertexAttributeDescriptionCount = 0;//数据的属性
+    vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+
 
     //图元类型
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
@@ -922,7 +955,7 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     inputAssembly.primitiveRestartEnable = VK_FALSE;
 
-    //视口与裁切
+    //视口与裁切--为什么没有定义具体的宽高？ 因为代码后面使用了动态状态（Dynamic State），具体的宽高可以在绘制命令录制时动态指定。
     VkPipelineViewportStateCreateInfo viewportState{};
     viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewportState.viewportCount = 1;
@@ -939,14 +972,15 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
-    //多重采样
+    //多重采样-用于抗锯齿
     VkPipelineMultisampleStateCreateInfo multisampling{};
     multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.sampleShadingEnable = VK_FALSE;
+    multisampling.sampleShadingEnable = VK_FALSE;//关闭抗锯齿
     multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-    //颜色混合
+    //颜色混合-针对渲染子通道中的帧缓冲附件，如果子通道有多个（N个）附件（MRT），那此处就需要创建多个（N个）对应的VkPipelineColorBlendAttachmentState，以便对每个输出附件进行混合设置
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    //glColorMask
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
     colorBlendAttachment.blendEnable = VK_FALSE;
 
@@ -961,7 +995,12 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     colorBlending.blendConstants[2] = 0.0f;
     colorBlending.blendConstants[3] = 0.0f;
 
-    //动态状态--视口与裁切测试
+    //视口与裁切测试-允许动态状态修改，渲染过程中可修改
+    /**
+    * 前面说过，Vulkan 几乎所有的状态都要提前烘焙，如果你调整了窗口大小，视口（Viewport）改变了，难道要销毁并重新创建一个庞大的管线吗？
+    * 为了解决这个问题，Vulkan 允许少数状态被标记为“动态的”，这里将视口和裁剪框设为动态，
+    * 意味着可以在渲染时（Command Buffer中）调用 vkCmdSetViewport 随时改变它们的大小，而无需重建管线。
+    */
     std::vector<VkDynamicState> dynamicStates = {
         VK_DYNAMIC_STATE_VIEWPORT,
         VK_DYNAMIC_STATE_SCISSOR
@@ -973,6 +1012,10 @@ void HelloTriangleApplication::createGraphicsPipeline() {
 
 
     //管道布局-全局变量使用-uniform
+    /**
+    * 管线布局用于告诉 GPU，着色器将会使用哪些全局变量（如 Uniform Buffers，通常用来传递 MVP 变换矩阵；或者 Push Constants，用于传递少量的高频更新数据）。
+    * 目前是空布局（Count=0），因为最简单的三角形还不需要传递这些参数。但即使为空，Vulkan 也要求必须创建一个 VkPipelineLayout 对象。
+    */
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 0; // Optional
@@ -984,7 +1027,7 @@ void HelloTriangleApplication::createGraphicsPipeline() {
         throw std::runtime_error("failed to create pipeline layout!");
     }
 
-    //开始创建渲染管线
+    //组装真正的渲染管线
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipelineInfo.stageCount = 2;
@@ -1001,7 +1044,7 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     pipelineInfo.pDynamicState = &dynamicState;
     //引用管道布局
     pipelineInfo.layout = this->_pipelineLayout;
-    //引用渲染pass和子通道
+    //当前的vkPipeline引用渲染pass和子通道--图形管线必须知道它将在哪种渲染通道中工作（比如颜色附件的格式是什么，有没有深度缓冲等），管线和 RenderPass 是高度绑定的。
     pipelineInfo.renderPass = this->_renderPass;
     pipelineInfo.subpass = 0;
 
