@@ -62,7 +62,7 @@ void HelloTriangleApplication::initVulkan() {
     this->createSurface();
     //选择物理显卡-//招募一个画师
     this->pickPhysicalDevice();
-    //激活显卡-逻辑设备
+    //激活显卡-逻辑设备-创建绘制队列_graphicsQueue/呈现队列_presentQueue句柄
     this->createLogicDevice();
     //创建交换链--多缓冲图像+呈现模式：绘制/等待呈现/呈现三步动态循环过程
     this->createSwapChain();
@@ -72,6 +72,7 @@ void HelloTriangleApplication::initVulkan() {
     this->createRenderPass();
     //提前烘焙的vulkan状态机（类似与openGL状态机，除了少量的动态状态外，渲染过程中几乎不允许修改）
     this->createGraphicsPipeline();
+    //创建帧缓冲，将renderPass和vkImageView连接起来，renderPass即可绘制到vkImageView
     this->createFramebuffers();
     this->createCommandPool();
     this->createCommandBuffer();
@@ -760,7 +761,10 @@ VkPipeline（画笔工具）：
 */
 void HelloTriangleApplication::createRenderPass()
 {
-    //1-帧缓冲附件（Attachment），通常指的就是帧缓冲中的图像（如颜色缓冲、深度缓冲）
+    //设置当前renderPass需要的帧缓冲附件，此处并没有真正的创建帧缓冲，只是标识出renderPass需要哪些帧缓冲附件，
+    //后面的vkframeBuffer才是真正的创建对应于当前renderPass的帧缓冲
+    
+    //1-列出帧缓冲附件（Attachment），通常指的就是帧缓冲中的图像（如颜色缓冲、深度缓冲）
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = this->_swapChainImageformat; // 必须与交换链图像格式一致
     colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;// 不使用多重采样 (MSAA)
@@ -1071,22 +1075,26 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     vkDestroyShaderModule(this->_logicDevice, vertShaderModule, nullptr);
 }
 
-//创建帧缓冲区
+//关键步骤十：创建帧缓冲区
+/**
+* vulkan帧缓冲与OpenGL的帧缓冲稍微有些不同，两者的一致之处都是将渲染结果绘制到某张中间图像上或者屏幕上（vulkan是交换链），
+* 不同的是vulkan的帧缓冲绑定renderPass，调用的时候需要传入renderPass和vkFrameBuffer，而OpenGL中只要调用了glBindFrameBuffer，后面所有的操作都受其影响。
+* renderPass必须有对应的vkFrameBuffer，vulkan需要为每个renderPass创建vkFrameBuffer，vkFrameBuffer链接vkImageView和renderPass，这样renderPass就可以绘制到对应的vkImageView
+*/
+//创建帧缓冲，将renderPass和vkImageView连接起来
 void HelloTriangleApplication::createFramebuffers()
 {
     //调整容器大小，使其能够容纳所有的帧缓冲区
     this->_swapChainFramebuffers.resize(this->_swapChainImageViews.size());
     //遍历图像视图并从中创建帧缓冲区
     for (size_t i = 0; i < this->_swapChainImageViews.size(); i++) {
-        VkImageView attachments[] = {
-            this->_swapChainImageViews[i]
-        };
+        VkImageView attachments[] = {this->_swapChainImageViews[i]};
 
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebufferInfo.renderPass = this->_renderPass;
+        framebufferInfo.renderPass = this->_renderPass;///frameBuffer绑定的renderPass
         framebufferInfo.attachmentCount = 1;
-        framebufferInfo.pAttachments = attachments;
+        framebufferInfo.pAttachments = attachments;//vkFrameBuffer绑定到vkImageView,这儿是直接绑定到交换链，那当前renderPass会直接往屏幕上进行绘制
         framebufferInfo.width = this->_swapChainExtent.width;
         framebufferInfo.height = this->_swapChainExtent.height;
         framebufferInfo.layers = 1;
