@@ -74,6 +74,7 @@ void HelloTriangleApplication::initVulkan() {
     this->createGraphicsPipeline();
     //创建帧缓冲，将renderPass和vkImageView连接起来，renderPass即可绘制到vkImageView
     this->createFramebuffers();
+    //创建命令池，用来管理命令缓冲区
     this->createCommandPool();
     this->createCommandBuffer();
     this->createSyncObjects();
@@ -1105,17 +1106,27 @@ void HelloTriangleApplication::createFramebuffers()
     }
 }
 
-//创建命令池
+//关键步骤十一：创建命令池，用来管理命令缓冲区
+/**
+* 在 Vulkan中，不能直接像 OpenGL 那样发送指令给 GPU，需要先将指令（如绘制、绑定资源等）记录到命令缓冲区（Command Buffer）中，
+* 然后将缓冲区提交给 GPU 队列,而命令池就是用来管理这些命令缓冲区内存的容器。
+*/
 void HelloTriangleApplication::createCommandPool()
 {
     //QueueFamilyIndices queueFamilyIndices = findQueueFamilies(this->_physicalDevice);
     //队列族
     VkCommandPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    /**
+    * VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT允许从该池分配的命令缓冲区被单独重置（Reset）。
+    * 在渲染循环中，我们通常每一帧都要重新记录命令。如果不设置这个标志，你必须重置整个命令池（即重置池中所有的缓冲区）才能重新使用其中的内存；
+    * 设置了它之后，你可以调用 vkResetCommandBuffer 来单独覆盖某个缓冲区的指令，灵活性更高。
+    */
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;//允许单独重新记录命令缓冲区，如果没有此标志，则所有缓冲区必须一起重置
     /**
-    * 命令缓冲区通过提交到设备队列（例如我们之前提到的图形队列和显示队列）来执行。
-    * 每个命令池只能分配提交到特定类型队列的命令缓冲区。我们将记录用于绘制的命令，因此选择了图形队列系列。
+    * 命令缓冲区通过提交到设备队列来执行，不同的队列执行的任务不同（有的处理图形，有的处理计算，有的处理内存传输）。
+    * 限制：一个命令池只能为特定的一种队列族创建命令缓冲区。
+    * 这里使用了 _graphicsFamily（图形队列族），说明从这个池里创建出来的命令，将来是发给 GPU 用来画图的。
     */
     poolInfo.queueFamilyIndex = this->_physicalQueueFamilyIndices._graphicsFamily.value();
     //创建命令池
