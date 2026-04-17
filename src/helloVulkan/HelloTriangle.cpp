@@ -840,7 +840,7 @@ void HelloTriangleApplication::createRenderPass()
 
     //4.2-确定时间点：在哪个阶段等待？
     //srcStageMask/dstStageMask：表示依赖者dstSubpass需要在运行到dstStageMask阶段进行等待，等待被依赖者srcSubpass运行完srcStageMask阶段并发出信号，依赖者dstSubpass收到信号才能继续运行；
-    //srcAccessMask/dstAccessMask：srcAccessMask表示被依赖者dstSubpass在运行到srcStageMask后做什么，即在发出信号之前做什么，而dstAccessMask表示依赖者dstSubpass接收到信号后做什么
+    //srcAccessMask/dstAccessMask：srcAccessMask表示被依赖者srcSubpass在运行到srcStageMask后做什么，即在发出信号之前做什么，而dstAccessMask表示依赖者dstSubpass接收到信号后做什么；
     //VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT含义：我们要等待“外部”执行到颜色附件输出阶段 (Color Attachment Output)。也就是等交换链完成对图像的读取，正准备释放它的那一刻。
     dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.srcAccessMask = 0;//在渲染通道开始前，我们不关心外部具体的内存访问状态（通常因为交换链的操作由信号量处理，这里设为 0 是安全的）
@@ -1305,10 +1305,11 @@ void HelloTriangleApplication::drawFrame() {
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
     /**
-    * 命令缓冲区提交到图形绘制队列/绘制引擎（作用于后缓冲），开始执行，
+    * 命令缓冲区提交到图形绘制队列/绘制引擎（作用于后缓冲），GPU开始执行，
     * 最后一个参数指向一个可选的“栅栏”，当命令缓冲区执行完毕时，该栅栏会发出信号，在下一帧中，CPU 将等待此命令缓冲区执行完毕，同时触发_renderFinishedSemaphore信号量发出信号，
-    * 即命令缓冲区执行完毕时同时触发_inFlightFence和_renderFinishedSemaphore两个信号量。
+    * 即命令缓冲区执行完毕（GPU绘制完毕）时同时触发_inFlightFence和_renderFinishedSemaphore两个信号量。
     */
+    //不阻塞
     if (vkQueueSubmit(this->_graphicsQueue, 1, &submitInfo, this->_inFlightFence) != VK_SUCCESS) {
         throw std::runtime_error("failed to submit draw command buffer!");
     }
@@ -1318,7 +1319,7 @@ void HelloTriangleApplication::drawFrame() {
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSemaphores;
+    presentInfo.pWaitSemaphores = signalSemaphores;//展示引擎当收到这个信号时可以进行呈现展示
 
     VkSwapchainKHR swapChains[] = { this->_swapChain };
     presentInfo.swapchainCount = 1;
@@ -1327,5 +1328,6 @@ void HelloTriangleApplication::drawFrame() {
 
     presentInfo.pResults = nullptr; // Optional
     //提交到呈现队列/展示引擎-（作用于前缓冲)-准备显示--vkQueuePresentKHR函数会向交换链提交显示图像的请求
+     //不阻塞
     vkQueuePresentKHR(this->_presentQueue, &presentInfo);
 }
