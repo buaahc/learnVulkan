@@ -76,7 +76,9 @@ void HelloTriangleApplication::initVulkan() {
     this->createFramebuffers();
     //创建命令池，用来管理命令缓冲区
     this->createCommandPool();
+    //分配命令缓冲区-从命令池中分配一块给命令缓冲区
     this->createCommandBuffer();
+    //创建同步对象-信号量/栅栏-信号里：gpu同步，栅栏：cpu等待gpu同步
     this->createSyncObjects();
 }
 
@@ -784,7 +786,7 @@ void HelloTriangleApplication::createRenderPass()
     //图像布局转换
     /**布局分为渲染开始前，渲染过程中，渲染结束后三种布局；
     * initialLayout	    UNDEFINED	                渲染通道开始前	告诉 GPU 丢弃旧数据，准备新一帧。
-    * reference.layout	COLOR_ATTACHMENT_OPTIMAL	子通道运行中	告诉 GPU 此时是以最高效的写入模式在工作。
+    * reference.layout	COLOR_ATTACHMENT_OPTIMAL	子通道运行中	告诉 GPU 此时是以最高效的写入模式在工作，这是一种为了“作为颜色缓冲区被写入”而极度优化的布局。
     * finalLayout	    PRESENT_SRC_KHR	            渲染通道结束后	转换成显示器能看懂的格式，准备展示。
     */
     /**Layout (布局): Vulkan 为了优化性能，图像在不同用途下会有不同的内存排列方式。
@@ -823,9 +825,10 @@ void HelloTriangleApplication::createRenderPass()
 
 
     //4-子通道依赖项--它负责处理图像的读写同步
+    //GPU 的渲染像流水线（Pipeline）一样分为很多阶段（读取顶点 -> 顶点着色器 -> ... -> 颜色输出）。
     /**
     * 它的作用是：控制“谁先做完，谁才能开始”。
-    * 因为 GPU 是并行工作的，如果你不显式告诉它顺序，它可能会在上一帧图像还没显示完时，就开始往这张图里写新的数据，导致画面撕裂或崩溃。
+    * 因为GPU是并行工作的，如果你不显式告诉它顺序，它可能会在上一帧图像还没显示完时，就开始往这张图里写新的数据，导致画面撕裂或崩溃。
     * 下面代码的结果是：子通道dstSubpass会在运行到VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT阶段后，一直等待srcSubpass运行到VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT阶段释放，dstSubpass子通道开始写入，
     * 这段代码翻译成白话就是：“嘿，GPU！在交换链把图像读完（输出阶段）之前，我的子通道 0 绝对不准往颜色缓冲区里写一个像素！”
     */
@@ -836,8 +839,8 @@ void HelloTriangleApplication::createRenderPass()
     dependency.dstSubpass = 0;//指的是我们代码里定义的第一个子通道
 
     //4.2-确定时间点：在哪个阶段等待？
-    //GPU 的渲染像流水线（Pipeline）一样分为很多阶段（读取顶点 -> 顶点着色器 -> ... -> 颜色输出）。
-    //srcStageMask: 对方（源）进行到哪一步时，我们要关注？
+    //srcStageMask/dstStageMask：表示依赖者dstSubpass需要在运行到dstStageMask阶段进行等待，等待被依赖者srcSubpass运行完srcStageMask阶段并发出信号，依赖者dstSubpass收到信号才能继续运行；
+    //srcAccessMask/dstAccessMask：srcAccessMask表示被依赖者dstSubpass在运行到srcStageMask后做什么，即在发出信号之前做什么，而dstAccessMask表示依赖者dstSubpass接收到信号后做什么
     //VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT含义：我们要等待“外部”执行到颜色附件输出阶段 (Color Attachment Output)。也就是等交换链完成对图像的读取，正准备释放它的那一刻。
     dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     dependency.srcAccessMask = 0;//在渲染通道开始前，我们不关心外部具体的内存访问状态（通常因为交换链的操作由信号量处理，这里设为 0 是安全的）
@@ -1135,28 +1138,34 @@ void HelloTriangleApplication::createCommandPool()
     }
 }
 
-//分配命令缓冲区--从命令池中分配单个命令缓冲区
+//关键步骤十二：分配命令缓冲区--从之前创建的命令池中分配单个具体的命令缓冲区
+//在 Vulkan 中，命令池就像是一大张还没写字的纸，而命令缓冲区则是从这张纸上裁下来的“活页”，让你可以在上面记录具体的 GPU 指令（如画一个三角形、切换贴图等）。
 void HelloTriangleApplication::createCommandBuffer() {
+    //1-分配而非创建：
+    //Create 通常意味着从系统申请内存，开销较大。
+    //Allocate 意味着从已经存在的资源池（Command Pool）中“拨”出一块内存。这样非常高效，因为命令池已经预先管理好了内存。
+    
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.commandPool = this->_commandPool;
-    //设置为分配主命令缓冲区
     /**
-    *  VK_COMMAND_BUFFER_LEVEL_PRIMARY:可以提交到队列中执行，但不能从其他命令缓冲区调用。
-    *  VK_COMMAND_BUFFER_LEVEL_SECONDARY:不能直接提交，但可以从主命令缓冲区调用。
+    *  VK_COMMAND_BUFFER_LEVEL_PRIMARY:主命令缓冲区--它可以被直接提交到 GPU 队列（Queue）执行，它可以执行（调用）二级命令缓冲区。
+    *  VK_COMMAND_BUFFER_LEVEL_SECONDARY:二级命令缓冲区--不能直接提交给GPU，但可以被主命令缓冲区调用（类似于函数调用）。
     */
+    //设置为分配主命令缓冲区
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
-
+    allocInfo.commandBufferCount = 1;//指定一次性分配多少个缓冲区，这里设置为1
+    //执行分配--分配完成后_commandBuffer句柄就可用了，但注意：此时的命令缓冲区是空的，而且处于“初始状态（Initial state）”。你还不能把它交给 GPU。
     if (vkAllocateCommandBuffers(this->_logicDevice, &allocInfo, &this->_commandBuffer) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate command buffers!");
     }
 }
 
-//记录命令缓冲区--将要执行的命令写入命令​​缓冲区
+//关键步骤十三：录制命令缓冲区--分配好命令缓冲区之后，就要开始将要执行的命令写入到命令​​缓冲区
+//在 Vulkan 中，不能直接下令“画一个三角形”。必须把所有的指令（开启渲染通道、绑定管线、设置视口、执行绘制等）按顺序“录制”到一个缓冲区里，最后一次性提交给 GPU 执行。
 void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
 {
-    //开始记录命令缓冲区信息
+    //1-开始录制命令缓冲区
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = 0; // Optional
@@ -1165,7 +1174,7 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
         throw std::runtime_error("failed to begin recording command buffer!");
     }
-    //开启渲染通道renderPass
+    //2-配置渲染通道renderPass
     VkRenderPassBeginInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     //渲染通道本身
@@ -1183,16 +1192,17 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     renderPassInfo.clearValueCount = 1;
     renderPassInfo.pClearValues = &clearColor;
 
-    //开始渲染-记录
     /**
     *VK_SUBPASS_CONTENTS_INLINE渲染通道命令将嵌入到主命令缓冲区本身中，不会执行任何辅助命令缓冲区。
     *VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS渲染通道命令将从辅助命令缓冲区执行。
     */
+    //开始渲染-记录，这告诉 GPU 渲染正式开始
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    //基本的绘图命令--绑定图形管线
+    //-绑定图形管线：图形管线（Graphics Pipeline）包含了着色器（Shader）、混合模式、深度测试等所有状态。绑定了它，接下来的绘制就会按照你预设的一套规则进行。
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->_graphicsPipeline);
-
+    
+    //如果你在创建管线时设置了视口（Viewport）和裁剪（Scissor）为 Dynamic State，那么你必须在录制时手动设置它们。
     VkViewport viewport{};
     viewport.x = 0.0f;
     viewport.y = 0.0f;
@@ -1207,19 +1217,18 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     scissor.extent = this->_swapChainExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-    //发出绘制指令
+    //发出绘制指令，真正执行“画”的动作
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
     //渲染过程结束
     vkCmdEndRenderPass(commandBuffer);
-    //命令缓冲区录制完毕
+    //命令缓冲区录制完毕--将缓冲区从“录制状态”转变为“可提交状态（Executable state）”。
     if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
         throw std::runtime_error("failed to record command buffer!");
     }
 }
 
-
-//创建同步对象-信号量/栅栏
+//关键步骤十四：创建同步对象-信号量/栅栏，信号量用于GPU同步，栅栏用于CPU同步
 void HelloTriangleApplication::createSyncObjects() {
     //信号量
     VkSemaphoreCreateInfo semaphoreInfo{};
@@ -1227,7 +1236,7 @@ void HelloTriangleApplication::createSyncObjects() {
     //栅栏
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    //创建栅栏时带有信号，这样就可以防止第一次无限等待
+    //创建栅栏时带有信号，这样就可以防止绘制函数drawFrame()第一次无限等待
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
     if (vkCreateSemaphore(this->_logicDevice, &semaphoreInfo, nullptr, &this->_imageAvailableSemaphore) != VK_SUCCESS ||
@@ -1237,46 +1246,42 @@ void HelloTriangleApplication::createSyncObjects() {
     }
 }
 
-//真正的渲染帧
+//真正的渲染帧-渲染循环
 /**从总体上看，Vulkan 渲染帧包含一系列常见的步骤：
 * 等待上一帧结束
 * 从交换链中获取图像
 * 记录一个命令缓冲区，该缓冲区会将场景绘制到该图像上。
-* 提交已记录的命令缓冲区
+* 提交已记录的命令缓冲区到GPU进行绘制
 * 展示交换链图像
 */
 void HelloTriangleApplication::drawFrame() {
     /**
     * 1-每一帧开始时等待上一帧
     * VK_TRUE--表示等待所有的栅栏
-    * UINT64_MAX--表示超时参数
-    * 如果栅栏一直没有信号，我们将一直等待
+    * timeout--表示等待的超时参数
+    * UINT64_MAX参数表示如果栅栏一直没有信号，我们将一直等待
     */
     //----------------------------------阻塞------------------------------------------------
+    //此函数将阻塞cpu，一直等待gpu发送上一帧绘制完成为止
     vkWaitForFences(this->_logicDevice, 1, &this->_inFlightFence, VK_TRUE, UINT64_MAX);
     //信号量发送成功，等待完成，重置栅栏为无信号状态
     vkResetFences(this->_logicDevice, 1, &this->_inFlightFence);
     /**
     * 2-从交换链获取图像--会一直阻塞，获取不到图像会一直阻塞，直到timeout，如果timeout = UINT64_MAX将会一直等待，程序会卡住在此处，
     * 获取成功后，函数阻塞结束，imageIndex将可用，但是this->_imageAvailableSemaphor却不一定有信号，因为屏幕端可能仍在扫描这张图片的最后几行，
-    * 但是函数阻塞结束后，程序将继续往下运行，直到运行到需要等待this->_imageAvailableSemaphor的地方，
-    * 当展示引擎完成所有的工作，彻底释放现存，gpu会触发this->_imageAvailableSemaphor这个信号量，
-    * 当显示引擎（前缓存）完成对图像的呈现，此时cpu就可以获取到图像并返回imageIndex索引，然后触发信号量。
+    * 但是函数阻塞结束后，程序将继续往下运行，可以进行顶点变换，光栅化等操作，直到运行到需要等待this->_imageAvailableSemaphor的地方，
+    * 当展示引擎完成所有的工作，彻底释放显存，gpu会触发this->_imageAvailableSemaphor这个信号量，然后渲染引擎将往这张图像进行写入操作。
     */
     uint32_t imageIndex;
-    //由于传入UINT64_MAX，在获取不到imageIndex的情况下，程序会在此处卡住，直到获取imageIndex成功后程序才继续运行，
-    //但即便获取到imageIndex，this->_imageAvailableSemaphore仍可能没有信号量，因为gpu仍可能在使用这张图像，所以渲染引擎不能对它进行绘制，必须等待，但是可以进行顶点变换，光栅化等操作，
-    //直到展示引擎完全释放imageIndex图像，才会触发this->_imageAvailableSemaphore信号量，然后渲染引擎将往这张图像进行写入操作。
     //----------------------------------阻塞------------------------------------------------
     vkAcquireNextImageKHR(this->_logicDevice, this->_swapChain, UINT64_MAX, this->_imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
-    //3-重置命令缓冲区-以便其能够被记录
+    //3-重置命令缓冲区-以便其能够被录制
     vkResetCommandBuffer(this->_commandBuffer, 0);
-    //4-记录命令缓冲区
+    //4-录制命令缓冲区
     recordCommandBuffer(this->_commandBuffer, imageIndex);
-    /**提交命令缓冲区
-    * 5-现在命令缓冲区已经完全记录好，可以提交了
-    */
+    
+    //5-提交命令缓冲区，录制结束，commandBuffer提交到gpu准备执行
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -1300,9 +1305,9 @@ void HelloTriangleApplication::drawFrame() {
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
     /**
-    * 命令缓冲区提交到图形绘制队列/绘制引擎（作用于后缓冲），即开始执行命令缓冲区
-    * 最后一个参数指向一个可选的“栅栏”，当命令缓冲区执行完毕时，该栅栏会发出信号，在下一帧中，CPU 将等待此命令缓冲区执行完毕，
-    * 同时触发_renderFinishedSemaphore信号量发出信号
+    * 命令缓冲区提交到图形绘制队列/绘制引擎（作用于后缓冲），开始执行，
+    * 最后一个参数指向一个可选的“栅栏”，当命令缓冲区执行完毕时，该栅栏会发出信号，在下一帧中，CPU 将等待此命令缓冲区执行完毕，同时触发_renderFinishedSemaphore信号量发出信号，
+    * 即命令缓冲区执行完毕时同时触发_inFlightFence和_renderFinishedSemaphore两个信号量。
     */
     if (vkQueueSubmit(this->_graphicsQueue, 1, &submitInfo, this->_inFlightFence) != VK_SUCCESS) {
         throw std::runtime_error("failed to submit draw command buffer!");
