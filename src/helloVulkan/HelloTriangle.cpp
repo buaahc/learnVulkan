@@ -16,6 +16,9 @@
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
+//定义可以同时处理2帧
+const int MAX_FRAMES_IN_FLIGHT = 2;
+
 //校验层
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -77,7 +80,7 @@ void HelloTriangleApplication::initVulkan() {
     //创建命令池，用来管理命令缓冲区
     this->createCommandPool();
     //分配命令缓冲区-从命令池中分配一块给命令缓冲区
-    this->createCommandBuffer();
+    this->createCommandBuffers();
     //创建同步对象-信号量/栅栏-信号里：gpu同步，栅栏：cpu等待gpu同步
     this->createSyncObjects();
 }
@@ -92,10 +95,12 @@ void HelloTriangleApplication::mainLoop() {
 }
 
 void HelloTriangleApplication::cleanup() {
-    vkDestroySemaphore(this->_logicDevice, this->_imageAvailableSemaphore, nullptr);
-    vkDestroySemaphore(this->_logicDevice, this->_renderFinishedSemaphore, nullptr);
-    vkDestroyFence(this->_logicDevice, this->_inFlightFence, nullptr);
-
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroySemaphore(this->_logicDevice, this->_imageAvailableSemaphores[i], nullptr);
+        vkDestroySemaphore(this->_logicDevice, this->_renderFinishedSemaphores[i], nullptr);
+        vkDestroyFence(this->_logicDevice, this->_inFlightFences[i], nullptr);
+    }
+    //请记住，当释放命令池时，命令缓冲区也会被释放，因此无需对命令缓冲区进行任何额外的清理工作。
     vkDestroyCommandPool(this->_logicDevice, this->_commandPool, nullptr);
     for (auto framebuffer : this->_swapChainFramebuffers) {
         vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
@@ -1140,11 +1145,11 @@ void HelloTriangleApplication::createCommandPool()
 
 //关键步骤十二：分配命令缓冲区--从之前创建的命令池中分配单个具体的命令缓冲区
 //在 Vulkan 中，命令池就像是一大张还没写字的纸，而命令缓冲区则是从这张纸上裁下来的“活页”，让你可以在上面记录具体的 GPU 指令（如画一个三角形、切换贴图等）。
-void HelloTriangleApplication::createCommandBuffer() {
+void HelloTriangleApplication::createCommandBuffers() {
     //1-分配而非创建：
     //Create 通常意味着从系统申请内存，开销较大。
     //Allocate 意味着从已经存在的资源池（Command Pool）中“拨”出一块内存。这样非常高效，因为命令池已经预先管理好了内存。
-    
+    this->_commandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.commandPool = this->_commandPool;
@@ -1154,9 +1159,10 @@ void HelloTriangleApplication::createCommandBuffer() {
     */
     //设置为分配主命令缓冲区
     allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;//指定一次性分配多少个缓冲区，这里设置为1
+    allocInfo.commandBufferCount = this->_commandBuffers.size();//指定一次性分配多少个缓冲区
     //执行分配--分配完成后_commandBuffer句柄就可用了，但注意：此时的命令缓冲区是空的，而且处于“初始状态（Initial state）”。你还不能把它交给 GPU。
-    if (vkAllocateCommandBuffers(this->_logicDevice, &allocInfo, &this->_commandBuffer) != VK_SUCCESS) {
+    //vkAllocateCommandBuffers一次执行可以分配多个命令缓冲区
+    if (vkAllocateCommandBuffers(this->_logicDevice, &allocInfo, this->_commandBuffers.data()) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate command buffers!");
     }
 }
@@ -1196,7 +1202,7 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     *VK_SUBPASS_CONTENTS_INLINE渲染通道命令将嵌入到主命令缓冲区本身中，不会执行任何辅助命令缓冲区。
     *VK_SUBPASS_CONTENTS_SECONDARY_COMMAND_BUFFERS渲染通道命令将从辅助命令缓冲区执行。
     */
-    //开始渲染-记录，这告诉 GPU 渲染正式开始
+    //开始渲染，这告诉 GPU 渲染正式开始
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
     //-绑定图形管线：图形管线（Graphics Pipeline）包含了着色器（Shader）、混合模式、深度测试等所有状态。绑定了它，接下来的绘制就会按照你预设的一套规则进行。
@@ -1230,6 +1236,10 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
 
 //关键步骤十四：创建同步对象-信号量/栅栏，信号量用于GPU同步，栅栏用于CPU同步
 void HelloTriangleApplication::createSyncObjects() {
+
+    this->_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    this->_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    this->_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
     //信号量
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1239,10 +1249,14 @@ void HelloTriangleApplication::createSyncObjects() {
     //创建栅栏时带有信号，这样就可以防止绘制函数drawFrame()第一次无限等待
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 
-    if (vkCreateSemaphore(this->_logicDevice, &semaphoreInfo, nullptr, &this->_imageAvailableSemaphore) != VK_SUCCESS ||
-        vkCreateSemaphore(this->_logicDevice, &semaphoreInfo, nullptr, &this->_renderFinishedSemaphore) != VK_SUCCESS ||
-        vkCreateFence(this->_logicDevice, &fenceInfo, nullptr, &this->_inFlightFence) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create semaphores!");
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        //vkCreateSemaphore和vkCreateFence一次只能创建一个对象
+        if (vkCreateSemaphore(this->_logicDevice, &semaphoreInfo, nullptr, &this->_imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            vkCreateSemaphore(this->_logicDevice, &semaphoreInfo, nullptr, &this->_renderFinishedSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(this->_logicDevice, &fenceInfo, nullptr, &this->_inFlightFences[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create semaphores!");
+        }
     }
 }
 
@@ -1263,9 +1277,9 @@ void HelloTriangleApplication::drawFrame() {
     */
     //----------------------------------阻塞------------------------------------------------
     //此函数将阻塞cpu，一直等待gpu发送上一帧绘制完成为止
-    vkWaitForFences(this->_logicDevice, 1, &this->_inFlightFence, VK_TRUE, UINT64_MAX);
+    vkWaitForFences(this->_logicDevice, 1, &this->_inFlightFences[this->_currentFrame], VK_TRUE, UINT64_MAX);
     //信号量发送成功，等待完成，重置栅栏为无信号状态
-    vkResetFences(this->_logicDevice, 1, &this->_inFlightFence);
+    vkResetFences(this->_logicDevice, 1, &this->_inFlightFences[this->_currentFrame]);
     /**
     * 2-从交换链获取图像--会一直阻塞，获取不到图像会一直阻塞，直到timeout，如果timeout = UINT64_MAX将会一直等待，程序会卡住在此处，
     * 获取成功后，函数阻塞结束，imageIndex将可用，但是this->_imageAvailableSemaphor却不一定有信号，因为屏幕端可能仍在扫描这张图片的最后几行，
@@ -1274,12 +1288,12 @@ void HelloTriangleApplication::drawFrame() {
     */
     uint32_t imageIndex;
     //----------------------------------阻塞------------------------------------------------
-    vkAcquireNextImageKHR(this->_logicDevice, this->_swapChain, UINT64_MAX, this->_imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    vkAcquireNextImageKHR(this->_logicDevice, this->_swapChain, UINT64_MAX, this->_imageAvailableSemaphores[this->_currentFrame], VK_NULL_HANDLE, &imageIndex);
 
     //3-重置命令缓冲区-以便其能够被录制
-    vkResetCommandBuffer(this->_commandBuffer, 0);
+    vkResetCommandBuffer(this->_commandBuffers[this->_currentFrame], 0);
     //4-录制命令缓冲区
-    recordCommandBuffer(this->_commandBuffer, imageIndex);
+    recordCommandBuffer(this->_commandBuffers[this->_currentFrame], imageIndex);
     
     //5-提交命令缓冲区，录制结束，commandBuffer提交到gpu准备执行
     VkSubmitInfo submitInfo{};
@@ -1291,17 +1305,17 @@ void HelloTriangleApplication::drawFrame() {
     * 当最终要写入帧缓冲时，必须等待可用的图像进行写入，
     * 在图像可用时才向图像写入颜色，因此我们指定了图形管线中写入颜色附件的阶段
     */
-    VkSemaphore waitSemaphores[] = { this->_imageAvailableSemaphore };
+    VkSemaphore waitSemaphores[] = { this->_imageAvailableSemaphores[this->_currentFrame] };
     VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
     submitInfo.waitSemaphoreCount = 1;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
     //指定要提交执行的命令缓冲区
     submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &this->_commandBuffer;
+    submitInfo.pCommandBuffers = &this->_commandBuffers[this->_currentFrame];
 
     //指定命令缓冲区执行完毕后要向_renderFinishedSemaphore信号量发出信号
-    VkSemaphore signalSemaphores[] = { this->_renderFinishedSemaphore };
+    VkSemaphore signalSemaphores[] = { this->_renderFinishedSemaphores[this->_currentFrame] };
     submitInfo.signalSemaphoreCount = 1;
     submitInfo.pSignalSemaphores = signalSemaphores;
     /**
@@ -1310,7 +1324,7 @@ void HelloTriangleApplication::drawFrame() {
     * 即命令缓冲区执行完毕（GPU绘制完毕）时同时触发_inFlightFence和_renderFinishedSemaphore两个信号量。
     */
     //不阻塞
-    if (vkQueueSubmit(this->_graphicsQueue, 1, &submitInfo, this->_inFlightFence) != VK_SUCCESS) {
+    if (vkQueueSubmit(this->_graphicsQueue, 1, &submitInfo, this->_inFlightFences[this->_currentFrame]) != VK_SUCCESS) {
         throw std::runtime_error("failed to submit draw command buffer!");
     }
 
@@ -1330,4 +1344,5 @@ void HelloTriangleApplication::drawFrame() {
     //提交到呈现队列/展示引擎-（作用于前缓冲)-准备显示--vkQueuePresentKHR函数会向交换链提交显示图像的请求
      //不阻塞
     vkQueuePresentKHR(this->_presentQueue, &presentInfo);
+    this->_currentFrame = (this->_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
