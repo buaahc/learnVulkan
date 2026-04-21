@@ -95,26 +95,28 @@ void HelloTriangleApplication::mainLoop() {
 }
 
 void HelloTriangleApplication::cleanup() {
+    this->cleanupSwapChain();
+    //for (auto framebuffer : this->_swapChainFramebuffers) {
+      //  vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
+    //}
+
+    vkDestroyPipeline(this->_logicDevice, this->_graphicsPipeline, nullptr);
+    vkDestroyPipelineLayout(this->_logicDevice, this->_pipelineLayout, nullptr);
+    vkDestroyRenderPass(this->_logicDevice, this->_renderPass, nullptr);
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(this->_logicDevice, this->_imageAvailableSemaphores[i], nullptr);
         vkDestroySemaphore(this->_logicDevice, this->_renderFinishedSemaphores[i], nullptr);
         vkDestroyFence(this->_logicDevice, this->_inFlightFences[i], nullptr);
     }
+    //销毁图像视图
+   // for (auto imageView : this->_swapChainImageViews) {
+     //   vkDestroyImageView(this->_logicDevice, imageView, nullptr);
+    //}
+    //销毁交换链
+    //vkDestroySwapchainKHR(this->_logicDevice, this->_swapChain, nullptr);
+
     //请记住，当释放命令池时，命令缓冲区也会被释放，因此无需对命令缓冲区进行任何额外的清理工作。
     vkDestroyCommandPool(this->_logicDevice, this->_commandPool, nullptr);
-    for (auto framebuffer : this->_swapChainFramebuffers) {
-        vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
-    }
-
-    vkDestroyPipeline(this->_logicDevice, this->_graphicsPipeline, nullptr);
-    vkDestroyPipelineLayout(this->_logicDevice, this->_pipelineLayout, nullptr);
-    vkDestroyRenderPass(this->_logicDevice, this->_renderPass, nullptr);
-    //销毁图像视图
-    for (auto imageView : this->_swapChainImageViews) {
-        vkDestroyImageView(this->_logicDevice, imageView, nullptr);
-    }
-    //销毁交换链
-    vkDestroySwapchainKHR(this->_logicDevice, this->_swapChain, nullptr);
     //销毁逻辑设备
     vkDestroyDevice(this->_logicDevice, nullptr);
     //销毁调试层
@@ -1345,4 +1347,29 @@ void HelloTriangleApplication::drawFrame() {
      //不阻塞
     vkQueuePresentKHR(this->_presentQueue, &presentInfo);
     this->_currentFrame = (this->_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+//重建交换链--比如窗口大小发生变化
+//1-重建之前要先进行销毁
+void HelloTriangleApplication::cleanupSwapChain() {
+    for (auto framebuffer : this->_swapChainFramebuffers) {
+        vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
+    }
+
+    for (auto imageView : this->_swapChainImageViews) {
+        vkDestroyImageView(this->_logicDevice, imageView, nullptr);
+    }
+
+    vkDestroySwapchainKHR(this->_logicDevice, this->_swapChain, nullptr);
+}
+
+//重建交换链
+void HelloTriangleApplication::recreateSwapChain()
+{
+    vkDeviceWaitIdle(this->_logicDevice);
+    //重建之前需要先进行销毁
+    this->cleanupSwapChain();
+    this->createSwapChain();
+    this->createImageViews();
+    this->createFramebuffers();
 }
