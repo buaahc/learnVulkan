@@ -49,11 +49,19 @@ void HelloTriangleApplication::run() {
     cleanup();
 }
 
+//窗口大小回调
+static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+    HelloTriangleApplication* app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+    app->_framebufferResized = true;
+}
+
 void HelloTriangleApplication::initWindow() {
     glfwInit();
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);//不要创建OpenGL上下文
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+    //glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);//禁止窗口大小调整
     this->_glfwWindow = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+    glfwSetWindowUserPointer(this->_glfwWindow, this);//HelloTriangleApplication实例绑定到_glfwWindow中，类似于userData
+    glfwSetFramebufferSizeCallback(this->_glfwWindow, framebufferResizeCallback);//设置窗口大小发生变化时的回调函数
 }
 
 void HelloTriangleApplication::initVulkan() {
@@ -91,6 +99,7 @@ void HelloTriangleApplication::mainLoop() {
         glfwPollEvents();
         this->drawFrame();
     }
+    //cpu阻塞，确保GPU全部指令执行完毕，处于闲置（idle）状态，cpu才继续运行，执行程序退出
     vkDeviceWaitIdle(this->_logicDevice);
 }
 
@@ -720,6 +729,47 @@ void HelloTriangleApplication::createSwapChain() {
     this->_swapChainImageformat = surfaceFormat.format;
 }
 
+//6.5-重建交换链--比如窗口大小发生变化，窗口大小发生变化后surface大小也会相应的发生变化，但是交换链大小不会变，两者尺寸大小不一致，呈现肯定出现错误，所以必须要重建交换链--
+//重建之前要先进行销毁
+void HelloTriangleApplication::cleanupSwapChain() {
+    for (auto framebuffer : this->_swapChainFramebuffers) {
+        vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
+    }
+
+    for (auto imageView : this->_swapChainImageViews) {
+        vkDestroyImageView(this->_logicDevice, imageView, nullptr);
+    }
+
+    vkDestroySwapchainKHR(this->_logicDevice, this->_swapChain, nullptr);
+}
+
+//6.6-重建交换链
+/**
+* 重建时机：
+* vkAcquireNextImageKHR和vkQueuePresentKHR通过返回特殊值来指示交换链已经不适应，需要重建；
+* VK_ERROR_OUT_OF_DATE_KHR交换链与表面不兼容，无法再用于渲染。这种情况通常发生在窗口大小调整之后。
+* VK_SUBOPTIMAL_KHR交换链仍然可以用于成功地呈现到表面，但表面属性不再完全匹配。
+*/
+void HelloTriangleApplication::recreateSwapChain()
+{
+    //如果是窗口最小化，将暂停渲染
+    int width = 0, height = 0;
+    glfwGetFramebufferSize(this->_glfwWindow, &width, &height);
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(this->_glfwWindow, &width, &height);
+        //等待下一个事件（比如窗口还原）
+        glfwWaitEvents();
+    }
+    //CPU强制阻塞操作--让 CPU 停下来，等待 GPU 把手里所有的活儿全部干完。
+    //只有当 GPU 队列里所有的命令都执行完了，GPU 彻底进入“闲置（Idle）”状态时，这个函数才会返回，CPU 才能继续执行下一行
+    vkDeviceWaitIdle(this->_logicDevice);
+    //重建之前需要先进行销毁
+    this->cleanupSwapChain();
+    this->createSwapChain();
+    this->createImageViews();
+    this->createFramebuffers();
+}
+
 // 关键步骤七：为每个VkImage创建imageView
 /**
  *可以理解为vkImage创建使用说明书，为交换链中的每一张“原始画板”配上一双“眼睛”和一套“说明书”。
@@ -1280,8 +1330,6 @@ void HelloTriangleApplication::drawFrame() {
     //----------------------------------阻塞------------------------------------------------
     //此函数将阻塞cpu，一直等待gpu发送上一帧绘制完成为止
     vkWaitForFences(this->_logicDevice, 1, &this->_inFlightFences[this->_currentFrame], VK_TRUE, UINT64_MAX);
-    //信号量发送成功，等待完成，重置栅栏为无信号状态
-    vkResetFences(this->_logicDevice, 1, &this->_inFlightFences[this->_currentFrame]);
     /**
     * 2-从交换链获取图像--会一直阻塞，获取不到图像会一直阻塞，直到timeout，如果timeout = UINT64_MAX将会一直等待，程序会卡住在此处，
     * 获取成功后，函数阻塞结束，imageIndex将可用，但是this->_imageAvailableSemaphor却不一定有信号，因为屏幕端可能仍在扫描这张图片的最后几行，
@@ -1290,14 +1338,23 @@ void HelloTriangleApplication::drawFrame() {
     */
     uint32_t imageIndex;
     //----------------------------------阻塞------------------------------------------------
-    vkAcquireNextImageKHR(this->_logicDevice, this->_swapChain, UINT64_MAX, this->_imageAvailableSemaphores[this->_currentFrame], VK_NULL_HANDLE, &imageIndex);
-
-    //3-重置命令缓冲区-以便其能够被录制
+    VkResult result = vkAcquireNextImageKHR(this->_logicDevice, this->_swapChain, UINT64_MAX, this->_imageAvailableSemaphores[this->_currentFrame], VK_NULL_HANDLE, &imageIndex);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR)//窗口大小发生了调整-需要重建交换连 
+    {
+        this->recreateSwapChain();
+        return;
+    }
+    else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        throw std::runtime_error("failed to acquire swap chain image!");
+    }
+    //3-信号量发送成功，等待完成，重置栅栏为无信号状态
+    vkResetFences(this->_logicDevice, 1, &this->_inFlightFences[this->_currentFrame]);
+    //4-重置命令缓冲区-以便其能够被录制
     vkResetCommandBuffer(this->_commandBuffers[this->_currentFrame], 0);
-    //4-录制命令缓冲区
+    //5-录制命令缓冲区
     recordCommandBuffer(this->_commandBuffers[this->_currentFrame], imageIndex);
     
-    //5-提交命令缓冲区，录制结束，commandBuffer提交到gpu准备执行
+    //6-提交命令缓冲区，录制结束，commandBuffer提交到gpu准备执行
     VkSubmitInfo submitInfo{};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -1330,7 +1387,7 @@ void HelloTriangleApplication::drawFrame() {
         throw std::runtime_error("failed to submit draw command buffer!");
     }
 
-    //绘制完成后将图像提交给交换链，准备呈现，最终使其显示在屏幕上
+    //7-绘制完成后将图像提交给交换链，准备呈现，最终使其显示在屏幕上
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
@@ -1345,31 +1402,14 @@ void HelloTriangleApplication::drawFrame() {
     presentInfo.pResults = nullptr; // Optional
     //提交到呈现队列/展示引擎-（作用于前缓冲)-准备显示--vkQueuePresentKHR函数会向交换链提交显示图像的请求
      //不阻塞
-    vkQueuePresentKHR(this->_presentQueue, &presentInfo);
+    VkResult result1 = vkQueuePresentKHR(this->_presentQueue, &presentInfo);
+    if (result1 == VK_ERROR_OUT_OF_DATE_KHR || result1 == VK_SUBOPTIMAL_KHR || this->_framebufferResized) //交换链过期-需要重建
+    {
+        this->_framebufferResized = false;
+        this->recreateSwapChain();
+    }
+    else if (result != VK_SUCCESS) {
+        throw std::runtime_error("failed to present swap chain image!");
+    }
     this->_currentFrame = (this->_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
-}
-
-//重建交换链--比如窗口大小发生变化
-//1-重建之前要先进行销毁
-void HelloTriangleApplication::cleanupSwapChain() {
-    for (auto framebuffer : this->_swapChainFramebuffers) {
-        vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
-    }
-
-    for (auto imageView : this->_swapChainImageViews) {
-        vkDestroyImageView(this->_logicDevice, imageView, nullptr);
-    }
-
-    vkDestroySwapchainKHR(this->_logicDevice, this->_swapChain, nullptr);
-}
-
-//重建交换链
-void HelloTriangleApplication::recreateSwapChain()
-{
-    vkDeviceWaitIdle(this->_logicDevice);
-    //重建之前需要先进行销毁
-    this->cleanupSwapChain();
-    this->createSwapChain();
-    this->createImageViews();
-    this->createFramebuffers();
 }
