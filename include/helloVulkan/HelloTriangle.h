@@ -5,6 +5,9 @@
 #include <cstdlib>
 #include <optional>
 #include <vector>
+#include <array>
+#include"glm/vec2.hpp"
+#include"glm/vec3.hpp"
 
 
 //队列族
@@ -23,6 +26,16 @@ struct SwapChainSupportDetails {
     VkSurfaceCapabilitiesKHR capabilities;//基本表面功能（交换链中图像的最小/最大数量，图像的最小/最大宽度和高度）
     std::vector<VkSurfaceFormatKHR> formats;//表面格式（像素格式、色彩空间）eg:R8B8G8A8
     std::vector<VkPresentModeKHR> presentModes;//可用的演示模式（立即模式/双缓冲垂直同步/三缓冲）
+};
+
+//顶点信息
+struct Vertex {
+    glm::vec2 pos;
+    glm::vec3 color;
+    //顶点缓冲区层面信息-它告诉 GPU：从哪个内存缓冲区读取，读取的步长是多少
+    static VkVertexInputBindingDescription getBindingDescription();
+    //“属性”层面信息-它对应着顶点着色器（GLSL）中 layout(location = x) in vec3 pos; 里的 x
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions();
 };
 
 class HelloTriangleApplication {
@@ -135,22 +148,36 @@ private:
     VkCommandPool _commandPool;
     //创建命令池
     void createCommandPool();
-    //命令缓冲区
-    VkCommandBuffer _commandBuffer;
+    //命令缓冲区--可以同时处理多帧
+    std::vector<VkCommandBuffer> _commandBuffers;
     //分配命令缓冲区--从命令池中分配单个命令缓冲区
-    void createCommandBuffer();
+    void createCommandBuffers();
     //记录命令缓冲区--将要执行的命令写入命令
     void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
     //渲染帧
     void drawFrame();
+    //当前帧
+    uint32_t _currentFrame = 0;
 
-    //同步对象
-    //信号量--用于GPU
-    VkSemaphore _imageAvailableSemaphore;//已从交换链获取图像并准备好渲染
-    VkSemaphore _renderFinishedSemaphore;//渲染已完成并可以进行展示
-    //栅栏--用于CPU--确保一次只渲染一帧
-    VkFence _inFlightFence;
-
+    //同步对象--定义多重同步对象，可以处理多帧
+    //信号量--用于GPU，栅栏--用于CPU
+    std::vector<VkSemaphore>_imageAvailableSemaphores;//已从交换链获取图像并准备好渲染
+    std::vector <VkSemaphore> _renderFinishedSemaphores;//渲染已完成并可以进行展示
+    std::vector <VkFence> _inFlightFences;
     void createSyncObjects();
+
+    //重建交换链--比如窗口大小发生变化，需要重置交换链
+    void recreateSwapChain();
+    //销毁之前的交换链
+    void cleanupSwapChain();
+public:
+    //窗口大小是否发生了变化
+    bool _framebufferResized = false;
+    //顶点属性
+    const std::vector<Vertex> _vertices = {
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    };
 };
