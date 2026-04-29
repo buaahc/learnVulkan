@@ -761,7 +761,7 @@ void HelloTriangleApplication::recreateSwapChain()
         glfwWaitEvents();
     }
     //CPU强制阻塞操作--让 CPU 停下来，等待 GPU 把手里所有的活儿全部干完。
-    //只有当 GPU 队列里所有的命令都执行完了，GPU 彻底进入“闲置（Idle）”状态时，这个函数才会返回，CPU 才能继续执行下一行
+    //只有当 GPU 队列里所有的命令都执行完了，GPU 彻底进入“闲置（Idle）”状态时，这个函数才会返回，CPU 才能继续执行
     vkDeviceWaitIdle(this->_logicDevice);
     //重建之前需要先进行销毁
     this->cleanupSwapChain();
@@ -1412,4 +1412,29 @@ void HelloTriangleApplication::drawFrame() {
         throw std::runtime_error("failed to present swap chain image!");
     }
     this->_currentFrame = (this->_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+VkVertexInputBindingDescription Vertex::getBindingDescription() {
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;//从索引为0的内存中读取数据
+    bindingDescription.stride = sizeof(Vertex);//步长，每次读取数据的步长
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//每个顶点步进一次，如果是实例化数组将是每个实例步进一次
+
+    return bindingDescription;
+}
+
+std::array<VkVertexInputAttributeDescription, 2> Vertex::getAttributeDescriptions() {
+    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+    attributeDescriptions[0].binding = 0;//即上面VkVertexInputBindingDescription描述中，索引0的内存数据
+    attributeDescriptions[0].location = 0;//这个就是vertexShader--layout(location = 0)
+    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;//vertexShader--layout(location = 0)
+    attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+    return attributeDescriptions;
 }
