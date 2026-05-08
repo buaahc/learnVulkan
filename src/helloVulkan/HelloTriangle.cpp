@@ -87,6 +87,8 @@ void HelloTriangleApplication::initVulkan() {
     this->createFramebuffers();
     //创建命令池，用来管理命令缓冲区
     this->createCommandPool();
+    //创建顶点缓冲区
+    this->createVertexBuffer();
     //分配命令缓冲区-从命令池中分配一块给命令缓冲区
     this->createCommandBuffers();
     //创建同步对象-信号量/栅栏-信号里：gpu同步，栅栏：cpu等待gpu同步
@@ -105,6 +107,7 @@ void HelloTriangleApplication::mainLoop() {
 
 void HelloTriangleApplication::cleanup() {
     this->cleanupSwapChain();
+    vkDestroyBuffer(this->_logicDevice, this->_vertexBuffer, nullptr);
     //for (auto framebuffer : this->_swapChainFramebuffers) {
       //  vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
     //}
@@ -1006,12 +1009,15 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     //把包含顶点数据的内存块（VkBuffer）绑定到管线上，
     //一个 Binding 描述了整个数据块的总体特征：比如相邻两个顶点之间的字节间距（Stride 是多少），
     //以及数据是逐个顶点提取，还是逐个实例（Instance）提取。这里为 0 说明我们没有绑定任何外部缓冲区。
-    vertexInputInfo.vertexBindingDescriptionCount = 0;//绑定的数据
-    vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
+    auto bindingDescription = Vertex::getBindingDescription();
+
+    vertexInputInfo.vertexBindingDescriptionCount = 1;//绑定的数据
+    vertexInputInfo.pVertexBindingDescriptions = &Vertex::getBindingDescription(); // Optional
     // Attribute（属性）？：一个顶点通常包含多种信息，比如位置（x,y,z）、颜色（r,g,b）、纹理坐标（u,v）等。
     // 这些具体的细节就是属性。属性描述用来告诉 GPU：“位置信息在这个数据块的第 0 个字节，类型是 vec3；颜色信息在第 12 个字节，类型也是 vec3”。
-    vertexInputInfo.vertexAttributeDescriptionCount = 0;//数据的属性
-    vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());//数据的属性
+    vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); // Optional
 
 
     //图元类型
@@ -1414,12 +1420,13 @@ void HelloTriangleApplication::drawFrame() {
     this->_currentFrame = (this->_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
+
+//缓冲区相关
 VkVertexInputBindingDescription Vertex::getBindingDescription() {
     VkVertexInputBindingDescription bindingDescription{};
     bindingDescription.binding = 0;//从索引为0的内存中读取数据
     bindingDescription.stride = sizeof(Vertex);//步长，每次读取数据的步长
     bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//每个顶点步进一次，如果是实例化数组将是每个实例步进一次
-
     return bindingDescription;
 }
 
@@ -1437,4 +1444,22 @@ std::array<VkVertexInputAttributeDescription, 2> Vertex::getAttributeDescription
     attributeDescriptions[1].offset = offsetof(Vertex, color);
 
     return attributeDescriptions;
+}
+
+//创建顶点缓冲区
+void HelloTriangleApplication::createVertexBuffer()
+{
+    VkBufferCreateInfo bufferInfo{};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = sizeof(this->_vertices[0]) * this->_vertices.size();
+    //指示缓冲区中的数据用途
+    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    //缓冲区也可以由特定的队列族拥有，或者同时在多个队列族之间共享。缓冲区只会从图形队列中使用，因此我们可以坚持独占访问
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(this->_logicDevice, &bufferInfo, nullptr, &this->_vertexBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create vertex buffer!");
+    }
+    //内存需求--查询其内存需求
+    VkMemoryRequirements memRequirements;
+    vkGetBufferMemoryRequirements(this->_logicDevice, this->_vertexBuffer, &memRequirements);
 }
