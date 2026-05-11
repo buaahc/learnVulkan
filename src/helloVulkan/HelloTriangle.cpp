@@ -108,6 +108,7 @@ void HelloTriangleApplication::mainLoop() {
 void HelloTriangleApplication::cleanup() {
     this->cleanupSwapChain();
     vkDestroyBuffer(this->_logicDevice, this->_vertexBuffer, nullptr);
+    vkFreeMemory(this->_logicDevice, this->_vertexBufferMemory, nullptr);
     //for (auto framebuffer : this->_swapChainFramebuffers) {
       //  vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
     //}
@@ -1012,7 +1013,7 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     auto bindingDescription = Vertex::getBindingDescription();
 
     vertexInputInfo.vertexBindingDescriptionCount = 1;//绑定的数据
-    vertexInputInfo.pVertexBindingDescriptions = &Vertex::getBindingDescription(); // Optional
+    vertexInputInfo.pVertexBindingDescriptions = &bindingDescription; // Optional
     // Attribute（属性）？：一个顶点通常包含多种信息，比如位置（x,y,z）、颜色（r,g,b）、纹理坐标（u,v）等。
     // 这些具体的细节就是属性。属性描述用来告诉 GPU：“位置信息在这个数据块的第 0 个字节，类型是 vec3；颜色信息在第 12 个字节，类型也是 vec3”。
     auto attributeDescriptions = Vertex::getAttributeDescriptions();
@@ -1281,8 +1282,13 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     scissor.extent = this->_swapChainExtent;
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
+
+    VkBuffer vertexBuffers[] = { this->_vertexBuffer };
+    VkDeviceSize offsets[] = { 0 };
+    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+
     //发出绘制指令，真正执行“画”的动作
-    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+    vkCmdDraw(commandBuffer, this->_vertices.size(), 1, 0, 0);
 
     //渲染过程结束
     vkCmdEndRenderPass(commandBuffer);
@@ -1446,6 +1452,24 @@ std::array<VkVertexInputAttributeDescription, 2> Vertex::getAttributeDescription
     return attributeDescriptions;
 }
 
+//查询内存类型
+uint32_t HelloTriangleApplication::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+    //VkMemoryType    memoryTypes[VK_MAX_MEMORY_TYPES];//内存类型
+    //VkMemoryHeap    memoryHeaps[VK_MAX_MEMORY_HEAPS];//类似于专用显存 (VRAM) 和用于显存耗尽时的 RAM 交换空间
+    //查询有关可用内存类型的信息 
+    VkPhysicalDeviceMemoryProperties memProperties;
+    vkGetPhysicalDeviceMemoryProperties(this->_physicalDevice, &memProperties);
+    //properties指定内存的特殊功能
+    for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+        //适用于缓冲区本身的内存类型
+        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+
+    throw std::runtime_error("failed to find suitable memory type!");
+}
+
 //创建顶点缓冲区
 void HelloTriangleApplication::createVertexBuffer()
 {
@@ -1462,4 +1486,24 @@ void HelloTriangleApplication::createVertexBuffer()
     //内存需求--查询其内存需求
     VkMemoryRequirements memRequirements;
     vkGetBufferMemoryRequirements(this->_logicDevice, this->_vertexBuffer, &memRequirements);
+
+    //内存分配
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    if (vkAllocateMemory(this->_logicDevice, &allocInfo, nullptr, &this->_vertexBufferMemory) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate vertex buffer memory!");
+    }
+
+    //缓冲区与内存进行绑定--第四个参数：内存区域内的偏移量
+    vkBindBufferMemory(this->_logicDevice, this->_vertexBuffer, this->_vertexBufferMemory, 0);
+
+    //显存映射到内存（cpu可以访问）--也可以指定特殊值VK_WHOLE_SIZE来映射整个内存
+    void* data;
+    vkMapMemory(this->_logicDevice, this->_vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+    memcpy(data, this->_vertices.data(), (size_t)bufferInfo.size);
+    vkUnmapMemory(this->_logicDevice, this->_vertexBufferMemory);
+
 }

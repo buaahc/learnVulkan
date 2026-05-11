@@ -176,11 +176,14 @@ public:
     bool _framebufferResized = false;
     //顶点属性
     const std::vector<Vertex> _vertices = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
     };
     //创建顶点缓冲区
     VkBuffer _vertexBuffer;
+    VkDeviceMemory _vertexBufferMemory;
     void createVertexBuffer();
+    //内存类型
+    uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 };
