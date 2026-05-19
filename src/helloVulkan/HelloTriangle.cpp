@@ -89,6 +89,8 @@ void HelloTriangleApplication::initVulkan() {
     this->createCommandPool();
     //创建顶点缓冲区
     this->createVertexBuffer();
+    //创建索引缓冲区
+    this->createIndexBuffer();
     //分配命令缓冲区-从命令池中分配一块给命令缓冲区
     this->createCommandBuffers();
     //创建同步对象-信号量/栅栏-信号里：gpu同步，栅栏：cpu等待gpu同步
@@ -107,6 +109,10 @@ void HelloTriangleApplication::mainLoop() {
 
 void HelloTriangleApplication::cleanup() {
     this->cleanupSwapChain();
+
+    vkDestroyBuffer(this->_logicDevice, this->_indexBuffer, nullptr);
+    vkFreeMemory(this->_logicDevice, this->_indexBufferMemory, nullptr);
+
     vkDestroyBuffer(this->_logicDevice, this->_vertexBuffer, nullptr);
     vkFreeMemory(this->_logicDevice, this->_vertexBufferMemory, nullptr);
     //for (auto framebuffer : this->_swapChainFramebuffers) {
@@ -754,7 +760,7 @@ void HelloTriangleApplication::cleanupSwapChain() {
 * VK_ERROR_OUT_OF_DATE_KHR交换链与表面不兼容，无法再用于渲染。这种情况通常发生在窗口大小调整之后。
 * VK_SUBOPTIMAL_KHR交换链仍然可以用于成功地呈现到表面，但表面属性不再完全匹配。
 */
-void HelloTriangleApplication::recreateSwapChain()
+void HelloTriangleApplication::reCreateSwapChain()
 {
     //如果是窗口最小化，将暂停渲染
     int width = 0, height = 0;
@@ -823,6 +829,8 @@ Subpass 1（步骤二：上色）：
 VkPipeline（画笔工具）：
 具体的画笔设置。注意： 每一个流水线（Pipeline）在创建时，都必须明确指定它属于哪一个 Render Pass 的哪一个 Subpass。
 */
+//createRenderPass中没有分配图像内存，没有创建真正的帧缓冲，只是在创建一个“蓝图”或者说是“规范说明书”
+//可以理解为写职位描述 (Blueprint/规范)，后面的createFrame才是真正的创建帧缓冲；
 void HelloTriangleApplication::createRenderPass()
 {
     //设置当前renderPass需要的帧缓冲附件，此处并没有真正的创建帧缓冲，只是标识出renderPass需要哪些帧缓冲附件，
@@ -1021,7 +1029,7 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); // Optional
 
 
-    //图元类型
+    //绘制的图元类型-即glDrawArray/glDrawElement函数中的第一个参数，绘制指令vkDrawCmd/vkCmdDrawIndexed并不指定图元类型
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -1083,7 +1091,7 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     dynamicState.pDynamicStates = dynamicStates.data();
 
 
-    //管道布局-全局变量使用-uniform
+    //管道布局-全局变量使用-uniform使用
     /**
     * 管线布局用于告诉 GPU，着色器将会使用哪些全局变量（如 Uniform Buffers，通常用来传递 MVP 变换矩阵；或者 Push Constants，用于传递少量的高频更新数据）。
     * 目前是空布局（Count=0），因为最简单的三角形还不需要传递这些参数。但即使为空，Vulkan 也要求必须创建一个 VkPipelineLayout 对象。
@@ -1143,13 +1151,21 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     vkDestroyShaderModule(this->_logicDevice, vertShaderModule, nullptr);
 }
 
-//关键步骤十：创建帧缓冲区
+//关键步骤十：创建帧缓冲区VkFramebuffer，VkFramebuffer不创建任何显存
 /**
 * vulkan帧缓冲与OpenGL的帧缓冲稍微有些不同，两者的一致之处都是将渲染结果绘制到某张中间图像上或者屏幕上（vulkan是交换链），
 * 不同的是vulkan的帧缓冲绑定renderPass，调用的时候需要传入renderPass和vkFrameBuffer，而OpenGL中只要调用了glBindFrameBuffer，后面所有的操作都受其影响。
-* renderPass必须有对应的vkFrameBuffer，vulkan需要为每个renderPass创建vkFrameBuffer，vkFrameBuffer链接vkImageView和renderPass，这样renderPass就可以绘制到对应的vkImageView
+* vulkan需要为每个renderPass创建vkFrameBuffer，vkFrameBuffer链接vkImageView和renderPass，这样renderPass就可以绘制到对应的vkImageView
 */
 //创建帧缓冲，将renderPass和vkImageView连接起来
+/**
+* VkImage (交换链图像) = 真正的、占体积的实物画板（真正消耗显存的地方）。
+* VkImageView (图像视图) = 画板的使用说明书（说明它是 2D 的，颜色格式是 RGB 等）。
+* VkRenderPass (渲染通道) = 厂长下发的工艺流程单（要求员工：开始前洗干净画板，画完后存好，并且规定了需要几张画板配合工作）。
+* VkFramebuffer (帧缓冲) = 一个回形针,把**“工艺流程单（RenderPass）”、“具体的画板使用说明（ImageView）”，以及“这次画画的尺寸（宽、高）”**，全部装订在一起，变成一份完整的工作包（Job Packet）
+*/
+//_renderPass描述画图的规则，需要的附件/工具/流程，ImageViews描述真实的显存，VkFramebuffer将两者链接起来，链接过程务必一一对应。
+//VkFramebuffer规定：按照_renderPass的流程，往_swapChainImageViews[i] 指向的那块物理显存里，在这个宽高范围内画图。
 void HelloTriangleApplication::createFramebuffers()
 {
     //调整容器大小，使其能够容纳所有的帧缓冲区
@@ -1162,6 +1178,21 @@ void HelloTriangleApplication::createFramebuffers()
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         framebufferInfo.renderPass = this->_renderPass;///frameBuffer绑定的renderPass
         framebufferInfo.attachmentCount = 1;
+        
+        /**
+        * 1-顺序（Order）严格对应：
+        * renderPassInfo.pAttachments是附件描述，framebufferInfo.pAttachments是真实的图像，
+        * framebufferInfo.pAttachments要与_renderPass中的renderPassInfo.pAttachments完全对应，
+        * 如果 RenderPass 的数组是：[0] 颜色附件, [1] 深度附件
+        * 那么 Framebuffer 的数组必须是：[0] 颜色视图, [1] 深度视图
+        * 2-格式（Format）：100% 严格对应：
+        * RenderPass 里说索引 0 的附件格式是 VK_FORMAT_B8G8R8A8_SRGB。
+        * 那么 Framebuffer 传进来的索引 0 的 VkImageView，在它创建时的格式也必须完全等于 VK_FORMAT_B8G8R8A8_SRGB。
+        * 3. 多重采样数（Samples）：100% 严格对应：
+        * RenderPass 里要求 samples = VK_SAMPLE_COUNT_1_BIT。
+        * 那么传入的 VkImageView 底层图像的采样数也必须是 1。如果你传入了一个 4 倍抗锯齿的图像，校验层会直接报错，
+        * 目前直接使用交换链_swapChainImage，所有用于直接输出到屏幕的交换链图像，其采样率必须、也只能是 1 倍（VK_SAMPLE_COUNT_1_BIT），所以与RenderPass里要求的samples对应起来
+        */
         framebufferInfo.pAttachments = attachments;//vkFrameBuffer绑定到vkImageView,这儿是直接绑定到交换链，那当前renderPass会直接往屏幕上进行绘制
         framebufferInfo.width = this->_swapChainExtent.width;
         framebufferInfo.height = this->_swapChainExtent.height;
@@ -1264,7 +1295,7 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     //开始渲染，这告诉 GPU 渲染正式开始
     vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-    //-绑定图形管线：图形管线（Graphics Pipeline）包含了着色器（Shader）、混合模式、深度测试等所有状态。绑定了它，接下来的绘制就会按照你预设的一套规则进行。
+    //-绑定图形管线：图形管线（Graphics Pipeline）包含了绘制的图元类型，着色器（Shader）、混合模式、深度测试等所有状态。绑定了它，接下来的绘制就会按照你预设的一套规则进行。
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->_graphicsPipeline);
     
     //如果你在创建管线时设置了视口（Viewport）和裁剪（Scissor）为 Dynamic State，那么你必须在录制时手动设置它们。
@@ -1285,10 +1316,33 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
 
     VkBuffer vertexBuffers[] = { this->_vertexBuffer };
     VkDeviceSize offsets[] = { 0 };
-    vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);
+    uint32_t firstBinding = 0;
+    uint32_t bindingCount = 1;
+    //vertexBuffers缓冲区插进0号“槽位”
+    vkCmdBindVertexBuffers(commandBuffer, firstBinding, bindingCount, vertexBuffers, offsets);
+
+    VkDeviceSize offset = 0;
+    vkCmdBindIndexBuffer(commandBuffer, this->_indexBuffer, offset, VK_INDEX_TYPE_UINT16);
+
 
     //发出绘制指令，真正执行“画”的动作
-    vkCmdDraw(commandBuffer, this->_vertices.size(), 1, 0, 0);
+    /**
+    * VkCommandBuffer                             commandBuffer,
+    * uint32_t                                    vertexCount,
+    * uint32_t                                    instanceCount,
+    * uint32_t                                    firstVertex,
+    * uint32_t                                    firstInstance
+    */
+    //vkCmdDraw(commandBuffer, this->_vertices.size(), 1, 0, 0);
+    /**
+    * VkCommandBuffer                             commandBuffer,
+    * uint32_t                                    indexCount,
+    * uint32_t                                    instanceCount,
+    * uint32_t                                    firstIndex,
+    * int32_t                                     vertexOffset,
+    * uint32_t                                    firstInstance
+    */
+    vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(this->_indices.size()), 1, 0, 0, 0);
 
     //渲染过程结束
     vkCmdEndRenderPass(commandBuffer);
@@ -1353,7 +1407,7 @@ void HelloTriangleApplication::drawFrame() {
     VkResult result = vkAcquireNextImageKHR(this->_logicDevice, this->_swapChain, UINT64_MAX, this->_imageAvailableSemaphores[this->_currentFrame], VK_NULL_HANDLE, &imageIndex);
     if (result == VK_ERROR_OUT_OF_DATE_KHR)//窗口大小发生了调整-需要重建交换连 
     {
-        this->recreateSwapChain();
+        this->reCreateSwapChain();
         return;
     }
     else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
@@ -1418,7 +1472,7 @@ void HelloTriangleApplication::drawFrame() {
     if (result1 == VK_ERROR_OUT_OF_DATE_KHR || result1 == VK_SUBOPTIMAL_KHR || this->_framebufferResized) //交换链过期-需要重建
     {
         this->_framebufferResized = false;
-        this->recreateSwapChain();
+        this->reCreateSwapChain();
     }
     else if (result != VK_SUCCESS) {
         throw std::runtime_error("failed to present swap chain image!");
@@ -1428,14 +1482,32 @@ void HelloTriangleApplication::drawFrame() {
 
 
 //缓冲区相关
+//整体绑定描述--对应于哪块缓冲区，步长，读取频率，对bindingDescription.binding（槽位号）的缓冲区进行描述
 VkVertexInputBindingDescription Vertex::getBindingDescription() {
     VkVertexInputBindingDescription bindingDescription{};
-    bindingDescription.binding = 0;//从索引为0的内存中读取数据
+    //// binding = 0 号槽位，可以理解为插排编号// 绑定号，后续在录制命令缓冲时(vkCmdBindVertexBuffers)，会绑定到 0 号槽位
+    //vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);//第二个参数firstBinding = 0即表示 _vertexBuffer 真正“插”进了 0 号槽位
+    bindingDescription.binding = 0;
     bindingDescription.stride = sizeof(Vertex);//步长，每次读取数据的步长
     bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//每个顶点步进一次，如果是实例化数组将是每个实例步进一次
     return bindingDescription;
+
+    /*
+    // 描述 0 号槽位怎么读
+        bindingDescription0.binding = 0;
+        bindingDescription0.stride = sizeof(glm::vec3); // 只包含位置
+
+    // 描述 1 号槽位怎么读
+        bindingDescription1.binding = 1;
+        bindingDescription1.stride = sizeof(glm::vec3) + sizeof(glm::vec2); // 包含法线和UV
+
+    // 稍后绑定的时候同时插入两个槽位：
+        vkCmdBindVertexBuffers(commandBuffer, 0, 2, {posBuffer, normalBuffer}, {0, 0});
+    */
+
 }
 
+//顶点属性描述--描述每个顶点内部的具体数据字段（例如：位置、颜色、法线等），以及它们如何与着色器（GLSL）中的 layout(location = x) 对应。
 std::array<VkVertexInputAttributeDescription, 2> Vertex::getAttributeDescriptions() {
     std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
 
@@ -1445,7 +1517,7 @@ std::array<VkVertexInputAttributeDescription, 2> Vertex::getAttributeDescription
     attributeDescriptions[0].offset = offsetof(Vertex, pos);
 
     attributeDescriptions[1].binding = 0;
-    attributeDescriptions[1].location = 1;//vertexShader--layout(location = 0)
+    attributeDescriptions[1].location = 1;//vertexShader--layout(location = 1)
     attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
     attributeDescriptions[1].offset = offsetof(Vertex, color);
 
@@ -1458,11 +1530,15 @@ uint32_t HelloTriangleApplication::findMemoryType(uint32_t typeFilter, VkMemoryP
     //VkMemoryHeap    memoryHeaps[VK_MAX_MEMORY_HEAPS];//类似于专用显存 (VRAM) 和用于显存耗尽时的 RAM 交换空间
     //查询有关可用内存类型的信息 
     VkPhysicalDeviceMemoryProperties memProperties;
+    // 获取物理设备（显卡）的内存属性
     vkGetPhysicalDeviceMemoryProperties(this->_physicalDevice, &memProperties);
     //properties指定内存的特殊功能
     for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
         //适用于缓冲区本身的内存类型
-        if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+        // 1. typeFilter & (1 << i) : 检查第 i 种内存类型是否被允许用于我们的缓冲区（按位与测试）
+        // 2. propertyFlags & properties : 检查该内存类型是否具备我们要求的所有特性（如对 CPU 可见、内存连贯等）
+        if ((typeFilter & (1 << i)) && 
+            (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
             return i;
         }
     }
@@ -1470,40 +1546,131 @@ uint32_t HelloTriangleApplication::findMemoryType(uint32_t typeFilter, VkMemoryP
     throw std::runtime_error("failed to find suitable memory type!");
 }
 
-//创建顶点缓冲区
-void HelloTriangleApplication::createVertexBuffer()
+//创建顶点缓冲区--Vulkan 中“缓冲区对象”和“底层内存”是分离的，需要先创建缓冲区（定义用途和大小），再分配内存，然后把两者绑定在一起；
+void HelloTriangleApplication::createBuffer(
+    VkDeviceSize size, //缓冲区大小
+    VkBufferUsageFlags usage,//缓冲区用途，打算使用这个缓冲区做什么
+    VkMemoryPropertyFlags properties,//显存类型/属性（专用显存/共享显存）
+    VkBuffer& buffer,
+    VkDeviceMemory& bufferMemory)
 {
+    //1-创建缓冲区对象，只定义，不占内存
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    bufferInfo.size = sizeof(this->_vertices[0]) * this->_vertices.size();
+    bufferInfo.size = size;
     //指示缓冲区中的数据用途
-    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.usage = usage;
     //缓冲区也可以由特定的队列族拥有，或者同时在多个队列族之间共享。缓冲区只会从图形队列中使用，因此我们可以坚持独占访问
     bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(this->_logicDevice, &bufferInfo, nullptr, &this->_vertexBuffer) != VK_SUCCESS) {
+    if (vkCreateBuffer(this->_logicDevice, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
         throw std::runtime_error("failed to create vertex buffer!");
     }
-    //内存需求--查询其内存需求
+    //2-内存需求--查询其内存需求，询问显卡：刚才创建的这个 buffer，需要分配多少内存？需要什么样的对齐方式？支持哪种内存类型？
     VkMemoryRequirements memRequirements;
-    vkGetBufferMemoryRequirements(this->_logicDevice, this->_vertexBuffer, &memRequirements);
+    vkGetBufferMemoryRequirements(this->_logicDevice, buffer, &memRequirements);
 
-    //内存分配
+    //3-内存分配
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    allocInfo.allocationSize = memRequirements.size;
-    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    allocInfo.allocationSize = memRequirements.size;// 注意：分配的大小可能比 bufferInfo.size 大（因为显存需要对齐）
+    // 寻找合适的内存类型。核心诉求：
+    // 1. VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：CPU 可以通过映射(Mapping)访问这块内存。
+    // 2. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT：内存连贯性。保证 CPU 写入后 GPU 立即能看到，不需要手动调用 vkFlushMappedMemoryRanges 刷新缓存。
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
 
-    if (vkAllocateMemory(this->_logicDevice, &allocInfo, nullptr, &this->_vertexBufferMemory) != VK_SUCCESS) {
+    if (vkAllocateMemory(this->_logicDevice, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
         throw std::runtime_error("failed to allocate vertex buffer memory!");
     }
+    //4-缓冲区与内存进行绑定--第四个参数：内存区域内的偏移量
+    vkBindBufferMemory(this->_logicDevice, buffer, bufferMemory, 0);
+}
 
-    //缓冲区与内存进行绑定--第四个参数：内存区域内的偏移量
-    vkBindBufferMemory(this->_logicDevice, this->_vertexBuffer, this->_vertexBufferMemory, 0);
+void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+    //内存传输也需要命令缓冲区
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = this->_commandPool;
+    allocInfo.commandBufferCount = 1;
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(this->_logicDevice, &allocInfo, &commandBuffer);
+    
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;//只会使用一次命令缓冲区，并且会等待函数执行完毕后再返回
 
-    //显存映射到内存（cpu可以访问）--也可以指定特殊值VK_WHOLE_SIZE来映射整个内存
+    //记录命令缓冲区
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    VkBufferCopy copyRegion{};
+    copyRegion.srcOffset = 0; // Optional
+    copyRegion.dstOffset = 0; // Optional
+    copyRegion.size = size;
+    vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+    vkEndCommandBuffer(commandBuffer);
+    //记录完毕准备执行
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+    //发送到GPU绘制队列准备执行
+    vkQueueSubmit(this->_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    //强制阻塞等待执行完毕
+    vkQueueWaitIdle(this->_graphicsQueue);
+    //清理用于传输操作的命令缓冲区
+    vkFreeCommandBuffers(this->_logicDevice, this->_commandPool, 1, &commandBuffer);
+}
+
+void HelloTriangleApplication::createVertexBuffer()
+{
+    VkDeviceSize bufferSize = sizeof(this->_vertices[0]) * this->_vertices.size();
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    //1-首先创建暂存缓冲区-使用主机可见的缓冲区作为临时缓冲区，进行内存映射和数据copy
+    //VK_BUFFER_USAGE_TRANSFER_SRC_BIT：缓冲区用作内存传输操作中的源
+    /**
+    * VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：就是任务管理器GPU界面中的共享GPU内存（就是真实的内存条）, CPU可以通过vkMapMemory直接访问，但是GPU读取会非常慢，
+    * CPU 先把数据写在这里，然后让 GPU 走 PCIe 总线搬运一次，搬到DEVICE_LOCAL 显卡专用内存里去，
+    * 或者是存放需要 CPU 每帧频繁更新且数据量极小的内容（如 Uniform Buffer）。
+    */
+    //VK_MEMORY_PROPERTY_HOST_COHERENT_BIT：内存连贯性。保证 CPU 写入后 GPU 立即能看到，不需要手动调用 vkFlushMappedMemoryRanges 刷新缓存。
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    //-显存映射到内存（cpu可以访问）数据copy--也可以指定特殊值VK_WHOLE_SIZE来映射整个内存
     void* data;
-    vkMapMemory(this->_logicDevice, this->_vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-    memcpy(data, this->_vertices.data(), (size_t)bufferInfo.size);
-    vkUnmapMemory(this->_logicDevice, this->_vertexBufferMemory);
+    vkMapMemory(this->_logicDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, this->_vertices.data(), (size_t)bufferSize);
+    vkUnmapMemory(this->_logicDevice, stagingBufferMemory);
 
+    //2-创建最终的顶点缓冲区，
+    // VK_BUFFER_USAGE_TRANSFER_DST_BIT：缓冲区用作内存传输操作中的目标位置
+    // VK_BUFFER_USAGE_VERTEX_BUFFER_BIT：缓冲区用作真实的顶点缓冲区
+    // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT，显卡专用内存，GPU读取非常快
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, this->_vertexBuffer, this->_vertexBufferMemory);
+    //缓冲区复制
+    copyBuffer(stagingBuffer, this->_vertexBuffer, bufferSize);
+    //复制完毕后需对暂存缓冲区进行清理
+    vkDestroyBuffer(this->_logicDevice, stagingBuffer, nullptr);
+    vkFreeMemory(this->_logicDevice, stagingBufferMemory, nullptr);
+}
+
+void HelloTriangleApplication::createIndexBuffer()
+{
+    VkDeviceSize bufferSize = sizeof(this->_indices[0]) * this->_indices.size();
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(this->_logicDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, this->_indices.data(), (size_t)bufferSize);
+    vkUnmapMemory(this->_logicDevice, stagingBufferMemory);
+
+    //VK_BUFFER_USAGE_INDEX_BUFFER_BIT：缓冲区用作顶点索引
+    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, this->_indexBuffer, this->_indexBufferMemory);
+
+    copyBuffer(stagingBuffer, this->_indexBuffer, bufferSize);
+
+    vkDestroyBuffer(this->_logicDevice, stagingBuffer, nullptr);
+    vkFreeMemory(this->_logicDevice, stagingBufferMemory, nullptr);
 }

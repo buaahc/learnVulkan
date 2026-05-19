@@ -168,22 +168,46 @@ private:
     void createSyncObjects();
 
     //重建交换链--比如窗口大小发生变化，需要重置交换链
-    void recreateSwapChain();
+    void reCreateSwapChain();
     //销毁之前的交换链
     void cleanupSwapChain();
 public:
     //窗口大小是否发生了变化
     bool _framebufferResized = false;
     //顶点属性
+    const std::vector<Vertex> _vertices1 = {
+    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f,0.0f, 1.0f}}
+    };
+
     const std::vector<Vertex> _vertices = {
-    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-    {{0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
     {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
     };
+
+    const std::vector<uint16_t> _indices = {
+    0, 1, 2, 2, 3, 0
+    };
+
     //创建顶点缓冲区
     VkBuffer _vertexBuffer;
     VkDeviceMemory _vertexBufferMemory;
+
+    VkBuffer _indexBuffer;
+    VkDeviceMemory _indexBufferMemory;
+
     void createVertexBuffer();
+
     //内存类型
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+    //抽象缓冲区
+    void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
+    //复制缓冲区
+    void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
+    //索引缓冲区
+    void createIndexBuffer();
+
 };
