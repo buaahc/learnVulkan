@@ -167,13 +167,13 @@ private:
     std::vector <VkFence> _inFlightFences;
     void createSyncObjects();
 
+public:
+    //窗口大小是否发生了变化
+    bool _framebufferResized = false;
     //重建交换链--比如窗口大小发生变化，需要重置交换链
     void recreateSwapChain();
     //销毁之前的交换链
     void cleanupSwapChain();
-public:
-    //窗口大小是否发生了变化
-    bool _framebufferResized = false;
     //顶点属性
     const std::vector<Vertex> _vertices = {
     {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
