@@ -81,6 +81,8 @@ void HelloTriangleApplication::initVulkan() {
     this->createImageViews();
     //创建渲染通道-渲染附件-子通道-就是对应openGL的renderPass
     this->createRenderPass();
+    //创建描述符-用于uniform/imageSampler等全局变量
+    this->createDescriptorSetLayout();
     //提前烘焙的vulkan状态机（类似与openGL状态机，除了少量的动态状态外，渲染过程中几乎不允许修改）
     this->createGraphicsPipeline();
     //创建帧缓冲，将renderPass和vkImageView连接起来，renderPass即可绘制到vkImageView
@@ -109,7 +111,7 @@ void HelloTriangleApplication::mainLoop() {
 
 void HelloTriangleApplication::cleanup() {
     this->cleanupSwapChain();
-
+    vkDestroyDescriptorSetLayout(this->_logicDevice, this->_descriptorSetLayout, nullptr);
     vkDestroyBuffer(this->_logicDevice, this->_indexBuffer, nullptr);
     vkFreeMemory(this->_logicDevice, this->_indexBufferMemory, nullptr);
 
@@ -1098,8 +1100,9 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     */
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 0; // Optional
-    pipelineLayoutInfo.pSetLayouts = nullptr; // Optional
+    pipelineLayoutInfo.setLayoutCount = 1;
+    //ubo/imageSamplers等全局变量描述符绑定到管线
+    pipelineLayoutInfo.pSetLayouts = &this->_descriptorSetLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
     pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
 
@@ -1673,4 +1676,39 @@ void HelloTriangleApplication::createIndexBuffer()
 
     vkDestroyBuffer(this->_logicDevice, stagingBuffer, nullptr);
     vkFreeMemory(this->_logicDevice, stagingBufferMemory, nullptr);
+}
+
+//描述符
+/**
+* 描述符（Descriptor）:如果想传一些所有顶点共用的全局数据（比如相机的投影矩阵、模型的位置矩阵、或者一张贴图），不能把它塞进顶点里，需要用到描述符（Descriptor）。
+* 描述符 (Descriptor)：一个指向资源的指针（比如指向一个 Uniform 缓冲区或一张纹理）。
+* 描述符集 (Descriptor Set)：一组描述符的集合（相当于插排上实际插满的插头）。
+* 描述符集布局 (Descriptor Set Layout)：相当于插排的“设计图”或“规格说明书”。它不包含具体数据，只是告诉 GPU：“我接下来会给你一个描述符集，这个集合的 0 号槽位是一个 Uniform 缓冲区，1 号槽位是一张贴图……”
+*/
+void HelloTriangleApplication::createDescriptorSetLayout()
+{
+    VkDescriptorSetLayoutBinding uboLayoutBinding{};
+    //1-binding = 0：槽位编号（插孔编号），这严格对应了在 GLSL 着色器代码里写的 layout(binding = 0)
+    uboLayoutBinding.binding = 0;
+    //2-descriptorType：描述符类型
+    //VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER 表示这个槽位专门用来插“Uniform 缓冲区（UBO）”
+    //（如果以后传贴图，这里就会变成 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER）
+    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    //3-descriptorCount：数量
+    // 如果你在着色器里声明了一个 UBO 数组，这里就填数组长度。这里只是单一的 UBO，所以是 1。
+    uboLayoutBinding.descriptorCount = 1;
+
+    //4-指定ubo对象用于哪个着色器阶段
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    //用于image sampling
+    uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &uboLayoutBinding;
+    
+    if (vkCreateDescriptorSetLayout(this->_logicDevice, &layoutInfo, nullptr, &this->_descriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor set layout!");
+    }
 }

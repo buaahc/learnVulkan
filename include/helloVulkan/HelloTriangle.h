@@ -8,6 +8,7 @@
 #include <array>
 #include"glm/vec2.hpp"
 #include"glm/vec3.hpp"
+#include"glm/mat4x4.hpp"
 
 
 //队列族
@@ -36,6 +37,13 @@ struct Vertex {
     static VkVertexInputBindingDescription getBindingDescription();
     //“属性”层面信息-它对应着顶点着色器（GLSL）中 layout(location = x) in vec3 pos; 里的 x
     static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions();
+};
+
+//ubo
+struct UniformBufferObject {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
 };
 
 class HelloTriangleApplication {
@@ -132,10 +140,6 @@ private:
     
     //创建着色器模块
     VkShaderModule createShaderModule(const std::vector<char>& code);
-
-    //固定功能
-    //管道布局
-    VkPipelineLayout _pipelineLayout;
     //渲染通道
     VkRenderPass _renderPass;
     void createRenderPass();
@@ -210,4 +214,8 @@ public:
     //索引缓冲区
     void createIndexBuffer();
 
+    //描述符
+    void createDescriptorSetLayout();
+    VkDescriptorSetLayout _descriptorSetLayout;
+    VkPipelineLayout _pipelineLayout;
 };
