@@ -95,7 +95,7 @@ private:
     为了方便,我们添加了一个VkQueue成员变量来直接存储逻辑设备的队列句柄
     */
     //绘制指令队列句柄，创建逻辑设备会自动创建队列，需要添加句柄用于进行交互
-    VkQueue _graphicsQueue;
+    VkQueue _graphicsDrawQueue;
     //呈现指令队列句柄
     VkQueue _presentQueue;
 

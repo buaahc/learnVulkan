@@ -73,7 +73,7 @@ void HelloTriangleApplication::initVulkan() {
     this->createSurface();
     //选择物理显卡-//招募一个画师
     this->pickPhysicalDevice();
-    //激活显卡-逻辑设备-创建绘制队列_graphicsQueue/呈现队列_presentQueue句柄
+    //激活显卡-逻辑设备-创建绘制队列_graphicsDrawQueue/呈现队列_presentQueue句柄
     this->createLogicDevice();
     //创建交换链--多缓冲图像+呈现模式：绘制/等待呈现/呈现三步动态循环过程
     this->createSwapChain();
@@ -298,6 +298,7 @@ void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& create
     // WARNING（警告信息）
     // ERROR（错误信息）
     createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    //createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     //指定回调函数处理的消息类型：
     // GENERAL：发生了一些与规范或性能无关的事件，
     // VALIDATION：发生了违反 Vulkan 规范的情况（比如传错参数）。
@@ -598,7 +599,7 @@ void HelloTriangleApplication::createLogicDevice()
         throw std::runtime_error("failed to create logical device!");
     }
     //6-从逻辑设备上得到图形队列族的句柄，拿到向显卡发送命令的通道，有了逻辑设备和队列句柄，我们现在就可以真正开始使用显卡来执行任务了
-    vkGetDeviceQueue(this->_logicDevice, this->_physicalQueueFamilyIndices._graphicsFamily.value(), 0, &this->_graphicsQueue);
+    vkGetDeviceQueue(this->_logicDevice, this->_physicalQueueFamilyIndices._graphicsFamily.value(), 0, &this->_graphicsDrawQueue);
     vkGetDeviceQueue(this->_logicDevice, this->_physicalQueueFamilyIndices._presentFamily.value(), 0, &this->_presentQueue);
 }
 
@@ -1452,7 +1453,7 @@ void HelloTriangleApplication::drawFrame() {
     * 即命令缓冲区执行完毕（GPU绘制完毕）时同时触发_inFlightFence和_renderFinishedSemaphore两个信号量。
     */
     //不阻塞
-    if (vkQueueSubmit(this->_graphicsQueue, 1, &submitInfo, this->_inFlightFences[this->_currentFrame]) != VK_SUCCESS) {
+    if (vkQueueSubmit(this->_graphicsDrawQueue, 1, &submitInfo, this->_inFlightFences[this->_currentFrame]) != VK_SUCCESS) {
         throw std::runtime_error("failed to submit draw command buffer!");
     }
 
@@ -1616,9 +1617,9 @@ void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &commandBuffer;
     //发送到GPU绘制队列准备执行
-    vkQueueSubmit(this->_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueSubmit(this->_graphicsDrawQueue, 1, &submitInfo, VK_NULL_HANDLE);
     //强制阻塞等待执行完毕
-    vkQueueWaitIdle(this->_graphicsQueue);
+    vkQueueWaitIdle(this->_graphicsDrawQueue);
     //清理用于传输操作的命令缓冲区
     vkFreeCommandBuffers(this->_logicDevice, this->_commandPool, 1, &commandBuffer);
 }
@@ -1678,7 +1679,7 @@ void HelloTriangleApplication::createIndexBuffer()
     vkFreeMemory(this->_logicDevice, stagingBufferMemory, nullptr);
 }
 
-//描述符
+//描述符--这严格对应了在 GLSL 着色器代码里写的 layout(binding = 0)
 /**
 * 描述符（Descriptor）:如果想传一些所有顶点共用的全局数据（比如相机的投影矩阵、模型的位置矩阵、或者一张贴图），不能把它塞进顶点里，需要用到描述符（Descriptor）。
 * 描述符 (Descriptor)：一个指向资源的指针（比如指向一个 Uniform 缓冲区或一张纹理）。
