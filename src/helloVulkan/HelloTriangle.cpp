@@ -12,6 +12,7 @@
 #include <cstdint> // Necessary for uint32_t
 #include <limits> // Necessary for std::numeric_limits
 #include <algorithm> // Necessary for std::clamp
+#include <chrono>
 #include "tools.h"
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
@@ -93,6 +94,8 @@ void HelloTriangleApplication::initVulkan() {
     this->createVertexBuffer();
     //创建索引缓冲区
     this->createIndexBuffer();
+    //创建uniformbuffer
+    this->createUniformBuffers();
     //分配命令缓冲区-从命令池中分配一块给命令缓冲区
     this->createCommandBuffers();
     //创建同步对象-信号量/栅栏-信号里：gpu同步，栅栏：cpu等待gpu同步
@@ -111,6 +114,10 @@ void HelloTriangleApplication::mainLoop() {
 
 void HelloTriangleApplication::cleanup() {
     this->cleanupSwapChain();
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        vkDestroyBuffer(this->_logicDevice, this->_uniformBuffers[i], nullptr);
+        vkFreeMemory(this->_logicDevice, this->_uniformBuffersMemory[i], nullptr);
+    }
     vkDestroyDescriptorSetLayout(this->_logicDevice, this->_descriptorSetLayout, nullptr);
     vkDestroyBuffer(this->_logicDevice, this->_indexBuffer, nullptr);
     vkFreeMemory(this->_logicDevice, this->_indexBufferMemory, nullptr);
@@ -1417,6 +1424,11 @@ void HelloTriangleApplication::drawFrame() {
     else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
+
+    //更新uniform缓冲区
+    updateUniformBuffer(this->_currentFrame);
+
+
     //3-信号量发送成功，等待完成，重置栅栏为无信号状态
     vkResetFences(this->_logicDevice, 1, &this->_inFlightFences[this->_currentFrame]);
     //4-重置命令缓冲区-以便其能够被录制
@@ -1712,4 +1724,36 @@ void HelloTriangleApplication::createDescriptorSetLayout()
     if (vkCreateDescriptorSetLayout(this->_logicDevice, &layoutInfo, nullptr, &this->_descriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor set layout!");
     }
+}
+
+//创建uniform缓冲区
+void HelloTriangleApplication::createUniformBuffers()
+{
+    VkDeviceSize bufferSize = sizeof(UniformBufferObject);
+
+    this->_uniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    this->_uniformBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    this->_uniformBuffersMappedData.resize(MAX_FRAMES_IN_FLIGHT);
+
+    //VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：就是任务管理器GPU界面中的共享GPU内存（就是真实的内存条）, CPU可以通过vkMapMemory直接访问，但是GPU读取会比较慢，因为每一帧都需要更新所以使用暂存缓冲区失去意义
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, this->_uniformBuffers[i], this->_uniformBuffersMemory[i]);
+        vkMapMemory(this->_logicDevice, this->_uniformBuffersMemory[i], 0, bufferSize, 0, &this->_uniformBuffersMappedData[i]);
+    }
+}
+
+//更新uniform缓冲区
+void HelloTriangleApplication::updateUniformBuffer(uint32_t currentImage) {
+    static auto startTime = std::chrono::high_resolution_clock::now();
+
+    auto currentTime = std::chrono::high_resolution_clock::now();
+    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+    
+    UniformBufferObject ubo{};
+    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+
+    ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo.proj = glm::perspective(glm::radians(45.0f), this->_swapChainExtent.width / (float)this->_swapChainExtent.height, 0.1f, 10.0f);
+    ubo.proj[1][1] *= -1;
+    memcpy(this->_uniformBuffersMappedData[currentImage], &ubo, sizeof(ubo));
 }

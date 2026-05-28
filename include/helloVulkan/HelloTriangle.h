@@ -9,6 +9,9 @@
 #include"glm/vec2.hpp"
 #include"glm/vec3.hpp"
 #include"glm/mat4x4.hpp"
+#define GLM_FORCE_RADIANS
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 
 //¶ÓÁÐ×å
@@ -218,4 +221,10 @@ public:
     void createDescriptorSetLayout();
     VkDescriptorSetLayout _descriptorSetLayout;
     VkPipelineLayout _pipelineLayout;
+
+    std::vector<VkBuffer> _uniformBuffers;
+    std::vector<VkDeviceMemory> _uniformBuffersMemory;
+    std::vector<void*> _uniformBuffersMappedData;
+    void createUniformBuffers();
+    void updateUniformBuffer(uint32_t currentImage);
 };
