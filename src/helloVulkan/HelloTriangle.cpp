@@ -1696,8 +1696,10 @@ void HelloTriangleApplication::createIndexBuffer()
 * 描述符（Descriptor）:如果想传一些所有顶点共用的全局数据（比如相机的投影矩阵、模型的位置矩阵、或者一张贴图），不能把它塞进顶点里，需要用到描述符（Descriptor）。
 * 描述符 (Descriptor)：一个指向资源的指针（比如指向一个 Uniform 缓冲区或一张纹理）。
 * 描述符集 (Descriptor Set)：一组描述符的集合（相当于插排上实际插满的插头）。
+* 描述符池（Descriptor Pool）： 在 Vulkan 中，不能凭空创建（Allocate）描述符集合，必须先向系统申请一大块专门的显存池，这就是描述符池，所有的描述符集合，都必须从这个池子里分配。
 * 描述符集布局 (Descriptor Set Layout)：相当于插排的“设计图”或“规格说明书”。它不包含具体数据，只是告诉 GPU：“我接下来会给你一个描述符集，这个集合的 0 号槽位是一个 Uniform 缓冲区，1 号槽位是一张贴图……”
 */
+//创建描述符集布局(Descriptor Set Layout)：规定单个描述符集里面包含描述符类型，个数
 void HelloTriangleApplication::createDescriptorSetLayout()
 {
     VkDescriptorSetLayoutBinding uboLayoutBinding{};
@@ -1707,7 +1709,7 @@ void HelloTriangleApplication::createDescriptorSetLayout()
     //VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER 表示这个槽位专门用来插“Uniform 缓冲区（UBO）”
     //（如果以后传贴图，这里就会变成 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER）
     uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    //3-descriptorCount：数量
+    //3-descriptorCount：单个描述符集包含的当前描述符的数量
     // 如果你在着色器里声明了一个 UBO 数组，这里就填数组长度。这里只是单一的 UBO，所以是 1。
     uboLayoutBinding.descriptorCount = 1;
 
@@ -1756,4 +1758,64 @@ void HelloTriangleApplication::updateUniformBuffer(uint32_t currentImage) {
     ubo.proj = glm::perspective(glm::radians(45.0f), this->_swapChainExtent.width / (float)this->_swapChainExtent.height, 0.1f, 10.0f);
     ubo.proj[1][1] *= -1;
     memcpy(this->_uniformBuffersMappedData[currentImage], &ubo, sizeof(ubo));
+}
+
+/*
+* 如果把 Vulkan 想象成一个** “装配车间”** ，理解就是：
+* Descriptor可以理解为单个材料资源（ubo/纹理等指针内存）；
+* DescriptorSet可以理解为资源集合（包装盒）；
+* DescriptorSetLayout可以理解为对包装盒进行描述图纸（包含几种资源，每种资源数量多少）；
+* DescriptorPool可以理解为总仓库，总共包含的描述符资源类型，每种描述符资源的总数量（descriptorCount），包含描述符集包装盒的总数量（maxSets）；
+* Allocate能分配的数量就是描述符集包装盒的总数量（maxSets），分配时根据DescriptorSetLayout的规定去拿资源，一旦资源不够就会报错；
+* 
+* 
+* 创建 Pool： 你给车间下达了原材料采购指标：“去进 100 个包装盒（maxSets），100 个主板（UBO），300 个屏幕（Texture），放在仓库里备用”。
+* 定义 Layout： 你画了一张图纸，规定一台机器需要装 1 个主板和 3 个屏幕到 1 个包装盒里。
+* 调用 Allocate： 拿着图纸去仓库提货装配。如果主板没了，或者屏幕没了，或者包装盒用完了，仓库管理员就会直接把你赶出去（报错抛异常）。
+*/
+
+//描述符池:资源的总数量，规定包含的各种描述符（descriptor）类型、总的数量，可开辟的描述符集（descriptorSet）的总数量
+void HelloTriangleApplication::createDescriptorPool() {
+    //1-规划池子里要装什么类型的东西、总共装多少个
+    //描述符类型（VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER）（也可以是VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER-纹理）及数量
+    VkDescriptorPoolSize poolSize{};
+    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    //descriptorCount表示这种描述符类型的全场总的库存量；
+    poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;//每个描述符集里面包含多少个描述符
+    //规定池子最多能分配多少个描述符集，
+    poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+    if (vkCreateDescriptorPool(this->_logicDevice, &poolInfo, nullptr, &this->_descriptorPool) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor pool!");
+    }
+}
+
+//创建一次描述符集（批量创建batch），可以一次性创建多个描述符集
+void HelloTriangleApplication::createDescriptorSets()
+{
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, this->_descriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = this->_descriptorPool;
+    //allocInfo.descriptorSetCount必须小于poolInfo.maxSets的剩余量
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    allocInfo.pSetLayouts = layouts.data();
+
+    this->_descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(this->_logicDevice, &allocInfo, this->_descriptorSets.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate descriptor sets!");
+    }
+    //创建了描述符集，描述符集包含了描述符，下一步填充描述符，使其指向显存指针
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = this->_uniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range = sizeof(UniformBufferObject);
+    }
+
 }

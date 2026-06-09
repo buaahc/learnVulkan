@@ -217,7 +217,8 @@ public:
     //索引缓冲区
     void createIndexBuffer();
 
-    //描述符
+    //描述符（Descriptor）:如果想传一些所有顶点共用的全局数据（比如相机的投影矩阵、模型的位置矩阵、或者一张贴图），不能把它塞进顶点里，需要用到描述符（Descriptor）
+   //描述符布局
     void createDescriptorSetLayout();
     VkDescriptorSetLayout _descriptorSetLayout;
     VkPipelineLayout _pipelineLayout;
@@ -227,4 +228,11 @@ public:
     std::vector<void*> _uniformBuffersMappedData;
     void createUniformBuffers();
     void updateUniformBuffer(uint32_t currentImage);
+    //描述符池-跟命令池类似
+    VkDescriptorPool _descriptorPool;
+    //描述符句柄
+    std::vector<VkDescriptorSet> _descriptorSets;
+    void createDescriptorPool();
+    void createDescriptorSets();
+
 };
