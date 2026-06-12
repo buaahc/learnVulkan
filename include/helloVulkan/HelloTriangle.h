@@ -10,6 +10,7 @@
 #include"glm/vec3.hpp"
 #include"glm/mat4x4.hpp"
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES//强制vec2/vec4对其
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -235,4 +236,8 @@ public:
     void createDescriptorPool();
     void createDescriptorSets();
 
+    //纹理图像
+    void createTextureImage();
+    VkImage _textureImage;
+    VkDeviceMemory _textureImageMemory;
 };

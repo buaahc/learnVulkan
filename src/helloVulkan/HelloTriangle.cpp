@@ -14,6 +14,8 @@
 #include <algorithm> // Necessary for std::clamp
 #include <chrono>
 #include "tools.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
@@ -90,12 +92,18 @@ void HelloTriangleApplication::initVulkan() {
     this->createFramebuffers();
     //创建命令池，用来管理命令缓冲区
     this->createCommandPool();
+    //创建纹理图像
+    this->createTextureImage();
     //创建顶点缓冲区
     this->createVertexBuffer();
     //创建索引缓冲区
     this->createIndexBuffer();
     //创建uniformbuffer
     this->createUniformBuffers();
+    //创建描述符池，包含描述符相关的所有总的资源
+    this->createDescriptorPool();
+    //创建描述符集
+    this->createDescriptorSets();
     //分配命令缓冲区-从命令池中分配一块给命令缓冲区
     this->createCommandBuffers();
     //创建同步对象-信号量/栅栏-信号里：gpu同步，栅栏：cpu等待gpu同步
@@ -994,8 +1002,8 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     //1-配置着色器
     std::string exeDir = getExeDirectory();
     std::cout << "EXE 所在目录: " << exeDir << std::endl;
-    auto vertShaderCode = readFile(exeDir + "/shaders/vert.spv");
-    auto fragShaderCode = readFile(exeDir + "/shaders/frag.spv");
+    auto vertShaderCode = readFile(exeDir + "/resources/shaders/vert.spv");
+    auto fragShaderCode = readFile(exeDir + "/resources/shaders/frag.spv");
 
     //读取着色器字节码信息
     VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
@@ -1059,7 +1067,8 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
     rasterizer.lineWidth = 1.0f;
     rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-    rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    //逆时针绘制
+    rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
     rasterizer.depthBiasEnable = VK_FALSE;
 
     //多重采样-用于抗锯齿
@@ -1335,7 +1344,18 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     VkDeviceSize offset = 0;
     vkCmdBindIndexBuffer(commandBuffer, this->_indexBuffer, offset, VK_INDEX_TYPE_UINT16);
 
-
+    //绑定描述符集，VK_PIPELINE_BIND_POINT_GRAPHICS将描述符集绑定到图形管线
+    /*
+    * VkCommandBuffer                             commandBuffer,
+    * VkPipelineBindPoint                         pipelineBindPoint,
+    * VkPipelineLayout                            layout,
+    * uint32_t                                    firstSet,//第一个描述符集的索引
+    * uint32_t                                    descriptorSetCount,//要绑定的描述符集数量
+    * const VkDescriptorSet*                      pDescriptorSets,//要绑定的描述符集
+    * uint32_t                                    dynamicOffsetCount,//动态描述符的偏移量数组
+    * const uint32_t*                             pDynamicOffsets
+    */
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->_pipelineLayout, 0, 1, &this->_descriptorSets[this->_currentFrame], 0, nullptr);
     //发出绘制指令，真正执行“画”的动作
     /**
     * VkCommandBuffer                             commandBuffer,
@@ -1353,6 +1373,7 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     * int32_t                                     vertexOffset,
     * uint32_t                                    firstInstance
     */
+
     vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(this->_indices.size()), 1, 0, 0, 0);
 
     //渲染过程结束
@@ -1498,12 +1519,12 @@ void HelloTriangleApplication::drawFrame() {
 
 
 //缓冲区相关
-//整体绑定描述--对应于哪块缓冲区，步长，读取频率，对bindingDescription.binding（槽位号）的缓冲区进行描述
+//缓冲区描述--对应于对哪块缓冲区的描述，步长，读取频率，对bindingDescription.binding（槽位号）的缓冲区进行描述
 VkVertexInputBindingDescription Vertex::getBindingDescription() {
     VkVertexInputBindingDescription bindingDescription{};
-    //// binding = 0 号槽位，可以理解为插排编号// 绑定号，后续在录制命令缓冲时(vkCmdBindVertexBuffers)，会绑定到 0 号槽位
+    //// binding = 0，可以理解对几号缓冲区进行描述，后续在录制命令缓冲时(vkCmdBindVertexBuffers)，会绑定到 0 号槽位
     //vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);//第二个参数firstBinding = 0即表示 _vertexBuffer 真正“插”进了 0 号槽位
-    bindingDescription.binding = 0;
+    bindingDescription.binding = 0;//这套描述/规则，是专门写给第 0 号顶点缓冲区的
     bindingDescription.stride = sizeof(Vertex);//步长，每次读取数据的步长
     bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//每个顶点步进一次，如果是实例化数组将是每个实例步进一次
     return bindingDescription;
@@ -1525,9 +1546,13 @@ VkVertexInputBindingDescription Vertex::getBindingDescription() {
 
 //顶点属性描述--描述每个顶点内部的具体数据字段（例如：位置、颜色、法线等），以及它们如何与着色器（GLSL）中的 layout(location = x) 对应。
 std::array<VkVertexInputAttributeDescription, 2> Vertex::getAttributeDescriptions() {
-    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
 
+    //VkVertexInputAttributeDescription通过binding连接缓冲区，通过location连接着色器中的变量
+
+    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+    //attributeDescriptions[0].binding表示从哪块缓冲区读取数据
     attributeDescriptions[0].binding = 0;//即上面VkVertexInputBindingDescription描述中，索引0的内存数据
+    // attributeDescriptions[0].location表述数据传递给着色器中的location= x的变量
     attributeDescriptions[0].location = 0;//这个就是vertexShader--layout(location = 0)
     attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
     attributeDescriptions[0].offset = offsetof(Vertex, pos);
@@ -1691,43 +1716,6 @@ void HelloTriangleApplication::createIndexBuffer()
     vkFreeMemory(this->_logicDevice, stagingBufferMemory, nullptr);
 }
 
-//描述符--这严格对应了在 GLSL 着色器代码里写的 layout(binding = 0)
-/**
-* 描述符（Descriptor）:如果想传一些所有顶点共用的全局数据（比如相机的投影矩阵、模型的位置矩阵、或者一张贴图），不能把它塞进顶点里，需要用到描述符（Descriptor）。
-* 描述符 (Descriptor)：一个指向资源的指针（比如指向一个 Uniform 缓冲区或一张纹理）。
-* 描述符集 (Descriptor Set)：一组描述符的集合（相当于插排上实际插满的插头）。
-* 描述符池（Descriptor Pool）： 在 Vulkan 中，不能凭空创建（Allocate）描述符集合，必须先向系统申请一大块专门的显存池，这就是描述符池，所有的描述符集合，都必须从这个池子里分配。
-* 描述符集布局 (Descriptor Set Layout)：相当于插排的“设计图”或“规格说明书”。它不包含具体数据，只是告诉 GPU：“我接下来会给你一个描述符集，这个集合的 0 号槽位是一个 Uniform 缓冲区，1 号槽位是一张贴图……”
-*/
-//创建描述符集布局(Descriptor Set Layout)：规定单个描述符集里面包含描述符类型，个数
-void HelloTriangleApplication::createDescriptorSetLayout()
-{
-    VkDescriptorSetLayoutBinding uboLayoutBinding{};
-    //1-binding = 0：槽位编号（插孔编号），这严格对应了在 GLSL 着色器代码里写的 layout(binding = 0)
-    uboLayoutBinding.binding = 0;
-    //2-descriptorType：描述符类型
-    //VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER 表示这个槽位专门用来插“Uniform 缓冲区（UBO）”
-    //（如果以后传贴图，这里就会变成 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER）
-    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    //3-descriptorCount：单个描述符集包含的当前描述符的数量
-    // 如果你在着色器里声明了一个 UBO 数组，这里就填数组长度。这里只是单一的 UBO，所以是 1。
-    uboLayoutBinding.descriptorCount = 1;
-
-    //4-指定ubo对象用于哪个着色器阶段
-    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    //用于image sampling
-    uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
-
-    VkDescriptorSetLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uboLayoutBinding;
-    
-    if (vkCreateDescriptorSetLayout(this->_logicDevice, &layoutInfo, nullptr, &this->_descriptorSetLayout) != VK_SUCCESS) {
-        throw std::runtime_error("failed to create descriptor set layout!");
-    }
-}
-
 //创建uniform缓冲区
 void HelloTriangleApplication::createUniformBuffers()
 {
@@ -1758,6 +1746,47 @@ void HelloTriangleApplication::updateUniformBuffer(uint32_t currentImage) {
     ubo.proj = glm::perspective(glm::radians(45.0f), this->_swapChainExtent.width / (float)this->_swapChainExtent.height, 0.1f, 10.0f);
     ubo.proj[1][1] *= -1;
     memcpy(this->_uniformBuffersMappedData[currentImage], &ubo, sizeof(ubo));
+}
+
+//描述符--这严格对应了在 GLSL 着色器代码里写的 layout(binding = 0)
+/**
+* 描述符（Descriptor）:如果想传一些所有顶点共用的全局数据（比如相机的投影矩阵、模型的位置矩阵、或者一张贴图），不能把它塞进顶点里，需要用到描述符（Descriptor）。
+* 描述符 (Descriptor)：一个指向资源的指针（比如指向一个 Uniform 缓冲区或一张纹理）。
+* 描述符集 (Descriptor Set)：一组描述符的集合（相当于插排上实际插满的插头）。
+* 描述符池（Descriptor Pool）： 在 Vulkan 中，不能凭空创建（Allocate）描述符集合，必须先向系统申请一大块专门的显存池，这就是描述符池，所有的描述符集合，都必须从这个池子里分配。
+* 描述符集布局 (Descriptor Set Layout)：相当于插排的“设计图”或“规格说明书”。它不包含具体数据，只是告诉 GPU：“我接下来会给你一个描述符集，这个集合的 0 号槽位是一个 Uniform 缓冲区，1 号槽位是一张贴图……”
+*/
+//创建描述符集布局(Descriptor Set Layout)：规定单个描述符集里面包含描述符类型，个数
+void HelloTriangleApplication::createDescriptorSetLayout()
+{
+    //VkDescriptorSetLayoutBinding 是对 Shader 中 “一个 layout(binding = X) 槽位” 的描述；
+    //layout(binding = 0) uniform sampler2D myTexture[10];VkDescriptorSetLayoutBinding就是对myTexture[10]的描述，此时VkDescriptorSetLayoutBinding需要包含十块数据
+    VkDescriptorSetLayoutBinding uboLayoutBinding{};
+    //1-binding = 0：槽位编号（插孔编号），这严格对应了在 GLSL 着色器代码里写的 layout(binding = 0)
+    uboLayoutBinding.binding = 0;
+    //2-descriptorType：描述符类型
+    //VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER 表示这个槽位专门用来插“Uniform 缓冲区（UBO）”
+    //（如果以后传贴图，这里就会变成 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER）
+    uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+   
+    //descriptorCount表示 layout(binding = X) 这个槽位需要创建多少个描述符，一个描述符就是一个指针，它只能指向 1 块具体的显存资源（1 个 Buffer 或者 1 张 Texture）。
+    //layout(set = 0, binding = 1) uniform sampler2D textures[10];就需要descriptorCount= 10，表示创建10个描述符，指向十块指针内存
+     // 这里只是单一的 UBO，所以是 descriptorCount = 1，如果你在着色器里声明了一个 UBO 数组，这里就填数组长度。。
+    uboLayoutBinding.descriptorCount = 1;
+
+    //4-指定ubo对象用于哪个着色器阶段
+    uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    //用于image sampling
+    uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &uboLayoutBinding;
+    //this->_descriptorSetLayout是上面 layout(binding = X)槽位的集合
+    if (vkCreateDescriptorSetLayout(this->_logicDevice, &layoutInfo, nullptr, &this->_descriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create descriptor set layout!");
+    }
 }
 
 /*
@@ -1812,10 +1841,54 @@ void HelloTriangleApplication::createDescriptorSets()
     }
     //创建了描述符集，描述符集包含了描述符，下一步填充描述符，使其指向显存指针
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        //描述符对应的buffer，告诉它真正的资源在哪（具体的 ubo 内存地址）
         VkDescriptorBufferInfo bufferInfo{};
         bufferInfo.buffer = this->_uniformBuffers[i];
         bufferInfo.offset = 0;
-        bufferInfo.range = sizeof(UniformBufferObject);
+        bufferInfo.range = sizeof(UniformBufferObject);//VK_WHOLE_SIZE
+
+        //描述符的配置通过一个vkUpdateDescriptorSets 函数进行更新
+        VkWriteDescriptorSet descriptorWrite{};
+        descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrite.dstSet = this->_descriptorSets[i];
+        descriptorWrite.dstBinding = 0;//更新对应的槽位binding--layout(binding = X)
+        descriptorWrite.dstArrayElement = 0;//描述符可以是数组，因此需要指定要更新的描述符数组中的初始索引
+        
+        //可以一次性更新数组中的多个描述符，从索引dstArrayElement开始，该descriptorCount字段指定要更新的描述符数组元素数量。
+        //如果0号槽位对应十个描述符，descriptorWrite.descriptorCount= 10
+        descriptorWrite.descriptorCount = 1;
+        descriptorWrite.pBufferInfo = &bufferInfo;
+        descriptorWrite.pImageInfo = nullptr; // Optional--imagedata
+        descriptorWrite.pTexelBufferView = nullptr; // Optional--bufferView
+        vkUpdateDescriptorSets(this->_logicDevice, 1, &descriptorWrite, 0, nullptr);
     }
+
+}
+
+void HelloTriangleApplication::createTextureImage()
+{
+    std::string exeDir = getExeDirectory();
+    int texWidth, texHeight, texChannels;
+    //STBI_rgb_alpha--强制加载带有 alpha 通道的图像，即使图像本身没有 alpha 通道，这有助于将来与其他纹理保持一致
+    stbi_uc* pixels = stbi_load((exeDir + "/resources/images/texture.jpg").c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    VkDeviceSize imageSize = texWidth * texHeight * 4;
+
+    if (!pixels) {
+        throw std::runtime_error("failed to load texture image!");
+    }
+
+    //暂存缓冲区
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    // 1. VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：CPU 可以通过映射(Mapping)访问这块内存。
+    // 2. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT：内存连贯性。保证 CPU 写入后 GPU 立即能看到，不需要手动调用 vkFlushMappedMemoryRanges 刷新缓存。
+    createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(this->_logicDevice, stagingBufferMemory, 0, imageSize, 0, &data);
+    memcpy(data, pixels, static_cast<size_t>(imageSize));
+    vkUnmapMemory(this->_logicDevice, stagingBufferMemory);
+    stbi_image_free(pixels);
 
 }
