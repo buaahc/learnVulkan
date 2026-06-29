@@ -237,7 +237,33 @@ public:
     void createDescriptorSets();
 
     //纹理图像
+    void createImage(
+        uint32_t width,
+        uint32_t height,
+        VkFormat format,
+        VkImageTiling tiling,
+        VkImageUsageFlags usage,
+        VkMemoryPropertyFlags properties,
+        VkImage& image,
+        VkDeviceMemory& imageMemory);
     void createTextureImage();
     VkImage _textureImage;
     VkDeviceMemory _textureImageMemory;
+    //图像布局转换
+    void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
+    //复制图像
+    void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+    //图像视图
+    VkImageView _textureImageView;
+    void createTextureImageView();
+    //纹理采样器
+    VkSampler _textureSampler;
+    void createTextureSampler();
+private:
+    //抽象函数
+    //创建/分配并开始记录命令缓冲区
+    VkCommandBuffer beginSingleTimeCommands();
+    //命令缓冲区记录结束
+    void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+    VkImageView createImageView(VkImage image, VkFormat format);
 };

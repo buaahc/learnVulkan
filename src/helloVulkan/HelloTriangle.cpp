@@ -94,6 +94,10 @@ void HelloTriangleApplication::initVulkan() {
     this->createCommandPool();
     //创建纹理图像
     this->createTextureImage();
+    //创建图像视图
+    this->createTextureImageView();
+    //创建纹理采样器
+    this->createTextureSampler();
     //创建顶点缓冲区
     this->createVertexBuffer();
     //创建索引缓冲区
@@ -122,6 +126,10 @@ void HelloTriangleApplication::mainLoop() {
 
 void HelloTriangleApplication::cleanup() {
     this->cleanupSwapChain();
+    vkDestroySampler(this->_logicDevice, this->_textureSampler, nullptr);
+    vkDestroyImageView(this->_logicDevice, this->_textureImageView, nullptr);
+    vkDestroyImage(this->_logicDevice, this->_textureImage, nullptr);
+    vkFreeMemory(this->_logicDevice, this->_textureImageMemory, nullptr);
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(this->_logicDevice, this->_uniformBuffers[i], nullptr);
         vkFreeMemory(this->_logicDevice, this->_uniformBuffersMemory[i], nullptr);
@@ -312,8 +320,8 @@ void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& create
     // VERBOSE（详细信息/诊断信息）
     // WARNING（警告信息）
     // ERROR（错误信息）
-    createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    //createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    //createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     //指定回调函数处理的消息类型：
     // GENERAL：发生了一些与规范或性能无关的事件，
     // VALIDATION：发生了违反 Vulkan 规范的情况（比如传错参数）。
@@ -498,7 +506,11 @@ bool HelloTriangleApplication::isDeviceSuitable(VkPhysicalDevice device) {
         SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
         swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
     }
-    return this->_physicalQueueFamilyIndices.isComplete() && swapchainExtensionsSupported && swapChainAdequate;
+
+    VkPhysicalDeviceFeatures supportedFeatures;
+    vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
+
+    return this->_physicalQueueFamilyIndices.isComplete() && swapchainExtensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;//强制启用各异向性过滤
 }
 
 //4.5-选择最终的物理显卡
@@ -588,13 +600,17 @@ void HelloTriangleApplication::createLogicDevice()
         this->_logicDeviceQueueCreateInfos.push_back(logicDeviceQueueCreateInfo);//std::vector<VkDeviceQueueCreateInfo> _logicDeviceQueueCreateInfos;
     }
 
+    VkPhysicalDeviceFeatures deviceFeatures{};
+    deviceFeatures.samplerAnisotropy = VK_TRUE;
+
     this->_vkLogicDeviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     this->_vkLogicDeviceCreateInfo.pQueueCreateInfos = this->_logicDeviceQueueCreateInfos.data();//指向队列创建信息
     this->_vkLogicDeviceCreateInfo.queueCreateInfoCount = this->_logicDeviceQueueCreateInfos.size();
 
     //2-指定使用的设备特性
     //告诉Vulkan打算使用物理设备的哪些高级特性（例如几何着色器、多点采样、各向异性过滤等）,通常这些特性在之前的“挑选物理设备”阶段已经查询过了。
-    this->_vkLogicDeviceCreateInfo.pEnabledFeatures = &this->_physicalDeviceFeatures;
+    //this->_vkLogicDeviceCreateInfo.pEnabledFeatures = &this->_physicalDeviceFeatures;
+    this->_vkLogicDeviceCreateInfo.pEnabledFeatures = &deviceFeatures;
 
     //3-启用交换链扩展--逻辑设备支持交换链扩展
     //逻辑设备本身不包含显示画面的功能，为了让显卡能把图像显示到 Windows/Linux 窗口上，必须启用特定的扩展，最常见的是 VK_KHR_swapchain（交换链扩展）。
@@ -809,6 +825,8 @@ void HelloTriangleApplication::createImageViews()
     this->_swapChainImageViews.resize(this->_swapChainImages.size());
     for (size_t i = 0; i < this->_swapChainImages.size(); i++)
     {
+        this->_swapChainImageViews[i] = createImageView(this->_swapChainImages[i], _swapChainImageformat);
+#if 0
         VkImageViewCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         createInfo.image = this->_swapChainImages[i];
@@ -829,6 +847,7 @@ void HelloTriangleApplication::createImageViews()
         if (vkCreateImageView(this->_logicDevice, &createInfo, nullptr, &this->_swapChainImageViews[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create image views!");
         }
+#endif // 0
     }
 }
 
@@ -1523,7 +1542,7 @@ void HelloTriangleApplication::drawFrame() {
 VkVertexInputBindingDescription Vertex::getBindingDescription() {
     VkVertexInputBindingDescription bindingDescription{};
     //// binding = 0，可以理解对几号缓冲区进行描述，后续在录制命令缓冲时(vkCmdBindVertexBuffers)，会绑定到 0 号槽位
-    //vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);//第二个参数firstBinding = 0即表示 _vertexBuffer 真正“插”进了 0 号槽位
+    //vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets);//第二个参数firstBinding = 0即表示 _vertexBuffer 真正“插”进了 0 号槽位，_vertexBuffer 绑定到了 0 号槽位；
     bindingDescription.binding = 0;//这套描述/规则，是专门写给第 0 号顶点缓冲区的
     bindingDescription.stride = sizeof(Vertex);//步长，每次读取数据的步长
     bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//每个顶点步进一次，如果是实例化数组将是每个实例步进一次
@@ -1595,7 +1614,7 @@ void HelloTriangleApplication::createBuffer(
     VkBuffer& buffer,
     VkDeviceMemory& bufferMemory)
 {
-    //1-创建缓冲区对象，只定义，不占内存
+    //1-创建缓冲区对象，只定义，不占内存（显存）
     VkBufferCreateInfo bufferInfo{};
     bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     bufferInfo.size = size;
@@ -1610,7 +1629,7 @@ void HelloTriangleApplication::createBuffer(
     VkMemoryRequirements memRequirements;
     vkGetBufferMemoryRequirements(this->_logicDevice, buffer, &memRequirements);
 
-    //3-内存分配
+    //3-内存（显存）分配
     VkMemoryAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     allocInfo.allocationSize = memRequirements.size;// 注意：分配的大小可能比 bufferInfo.size 大（因为显存需要对齐）
@@ -1627,6 +1646,8 @@ void HelloTriangleApplication::createBuffer(
 }
 
 void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+
+#if 0
     //内存传输也需要命令缓冲区
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1638,15 +1659,24 @@ void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer
     
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;//只会使用一次命令缓冲区，并且会等待函数执行完毕后再返回
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;//命令缓冲区进行传输工作，且只会使用一次命令缓冲区，并且会等待函数执行完毕后再返回
 
     //记录命令缓冲区
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin recording command buffer!");
+    }
+#endif // 0
+
+    //内存传输也需要命令缓冲区
+    VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
     VkBufferCopy copyRegion{};
     copyRegion.srcOffset = 0; // Optional
     copyRegion.dstOffset = 0; // Optional
     copyRegion.size = size;
     vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+    this->endSingleTimeCommands(commandBuffer);
+
+#if 0
     vkEndCommandBuffer(commandBuffer);
     //记录完毕准备执行
     VkSubmitInfo submitInfo{};
@@ -1659,6 +1689,7 @@ void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer
     vkQueueWaitIdle(this->_graphicsDrawQueue);
     //清理用于传输操作的命令缓冲区
     vkFreeCommandBuffers(this->_logicDevice, this->_commandPool, 1, &commandBuffer);
+#endif // 0
 }
 
 void HelloTriangleApplication::createVertexBuffer()
@@ -1761,6 +1792,7 @@ void HelloTriangleApplication::createDescriptorSetLayout()
 {
     //VkDescriptorSetLayoutBinding 是对 Shader 中 “一个 layout(binding = X) 槽位” 的描述；
     //layout(binding = 0) uniform sampler2D myTexture[10];VkDescriptorSetLayoutBinding就是对myTexture[10]的描述，此时VkDescriptorSetLayoutBinding需要包含十块数据
+    //创建uniform buffer object描述符
     VkDescriptorSetLayoutBinding uboLayoutBinding{};
     //1-binding = 0：槽位编号（插孔编号），这严格对应了在 GLSL 着色器代码里写的 layout(binding = 0)
     uboLayoutBinding.binding = 0;
@@ -1768,21 +1800,34 @@ void HelloTriangleApplication::createDescriptorSetLayout()
     //VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER 表示这个槽位专门用来插“Uniform 缓冲区（UBO）”
     //（如果以后传贴图，这里就会变成 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER）
     uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-   
     //descriptorCount表示 layout(binding = X) 这个槽位需要创建多少个描述符，一个描述符就是一个指针，它只能指向 1 块具体的显存资源（1 个 Buffer 或者 1 张 Texture）。
     //layout(set = 0, binding = 1) uniform sampler2D textures[10];就需要descriptorCount= 10，表示创建10个描述符，指向十块指针内存
      // 这里只是单一的 UBO，所以是 descriptorCount = 1，如果你在着色器里声明了一个 UBO 数组，这里就填数组长度。。
     uboLayoutBinding.descriptorCount = 1;
-
     //4-指定ubo对象用于哪个着色器阶段
     uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     //用于image sampling
     uboLayoutBinding.pImmutableSamplers = nullptr; // Optional
 
+    //创建纹理图像描述符
+    VkDescriptorSetLayoutBinding samplerLayoutBinding{};
+    samplerLayoutBinding.binding = 1;
+    samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    samplerLayoutBinding.descriptorCount = 1;
+    samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    samplerLayoutBinding.pImmutableSamplers = nullptr;
+
+
+    std::array<VkDescriptorSetLayoutBinding, 2> bindings = { uboLayoutBinding, samplerLayoutBinding };
+
     VkDescriptorSetLayoutCreateInfo layoutInfo{};
     layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layoutInfo.bindingCount = 1;
-    layoutInfo.pBindings = &uboLayoutBinding;
+    layoutInfo.bindingCount = static_cast<uint32_t>(bindings.size());
+    layoutInfo.pBindings = bindings.data();
+
+
+
+
     //this->_descriptorSetLayout是上面 layout(binding = X)槽位的集合
     if (vkCreateDescriptorSetLayout(this->_logicDevice, &layoutInfo, nullptr, &this->_descriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor set layout!");
@@ -1806,16 +1851,20 @@ void HelloTriangleApplication::createDescriptorSetLayout()
 //描述符池:资源的总数量，规定包含的各种描述符（descriptor）类型、总的数量，可开辟的描述符集（descriptorSet）的总数量
 void HelloTriangleApplication::createDescriptorPool() {
     //1-规划池子里要装什么类型的东西、总共装多少个
-    //描述符类型（VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER）（也可以是VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER-纹理）及数量
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    //描述符类型（VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER-ubo/VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER-纹理）及数量
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     //descriptorCount表示这种描述符类型的全场总的库存量；
-    poolSize.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    //descriptorCount表示这种描述符类型的全场总的库存量；
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes = &poolSize;//每个描述符集里面包含多少个描述符
+    poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+    poolInfo.pPoolSizes = poolSizes.data();//每个描述符集里面包含多少个描述符
     //规定池子最多能分配多少个描述符集，
     poolInfo.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
@@ -1841,12 +1890,45 @@ void HelloTriangleApplication::createDescriptorSets()
     }
     //创建了描述符集，描述符集包含了描述符，下一步填充描述符，使其指向显存指针
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        //描述符对应的buffer，告诉它真正的资源在哪（具体的 ubo 内存地址）
+
+        //ubo描述符对应的buffer，告诉它真正的资源在哪（具体的 ubo 内存地址）
         VkDescriptorBufferInfo bufferInfo{};
         bufferInfo.buffer = this->_uniformBuffers[i];
         bufferInfo.offset = 0;
         bufferInfo.range = sizeof(UniformBufferObject);//VK_WHOLE_SIZE
 
+        //纹理描述符对应的buffer
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        imageInfo.imageView = this->_textureImageView;
+        imageInfo.sampler = this->_textureSampler;
+
+        std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+
+        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[0].dstSet = this->_descriptorSets[i];
+        descriptorWrites[0].dstBinding = 0;//更新对应的槽位binding--layout(binding = 0)
+        descriptorWrites[0].dstArrayElement = 0;//描述符可以是数组，因此需要指定要更新的描述符数组中的初始索引
+
+        //可以一次性更新数组中的多个描述符，从索引dstArrayElement开始，该descriptorCount字段指定要更新的描述符数组元素数量。
+        //如果0号槽位对应十个描述符，descriptorWrite.descriptorCount= 10
+        descriptorWrites[0].descriptorCount = 1;
+        descriptorWrites[0].pBufferInfo = &bufferInfo;
+        descriptorWrites[0].pImageInfo = nullptr; // Optional--imagedata
+        descriptorWrites[0].pTexelBufferView = nullptr; // Optional--bufferView
+
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptorWrites[1].dstSet = this->_descriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;////更新对应的槽位binding--layout(binding = 1)
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pImageInfo = &imageInfo;
+
+
+
+#if 0
         //描述符的配置通过一个vkUpdateDescriptorSets 函数进行更新
         VkWriteDescriptorSet descriptorWrite{};
         descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1861,11 +1943,221 @@ void HelloTriangleApplication::createDescriptorSets()
         descriptorWrite.pBufferInfo = &bufferInfo;
         descriptorWrite.pImageInfo = nullptr; // Optional--imagedata
         descriptorWrite.pTexelBufferView = nullptr; // Optional--bufferView
-        vkUpdateDescriptorSets(this->_logicDevice, 1, &descriptorWrite, 0, nullptr);
+#endif // 0
+        vkUpdateDescriptorSets(this->_logicDevice, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
 
 }
 
+VkCommandBuffer HelloTriangleApplication::beginSingleTimeCommands() {
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool = this->_commandPool;
+    allocInfo.commandBufferCount = 1;
+
+    VkCommandBuffer commandBuffer;
+    vkAllocateCommandBuffers(this->_logicDevice, &allocInfo, &commandBuffer);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;//命令缓冲区进行传输工作，且只会使用一次命令缓冲区，并且会等待函数执行完毕后再返回
+
+    //记录命令缓冲区
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin recording command buffer!");
+    }
+    return commandBuffer;
+}
+
+void HelloTriangleApplication::endSingleTimeCommands(VkCommandBuffer commandBuffer) {
+    vkEndCommandBuffer(commandBuffer);
+
+    //提交到绘制队列
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    //发送到GPU绘制队列准备执行
+    vkQueueSubmit(this->_graphicsDrawQueue, 1, &submitInfo, VK_NULL_HANDLE);
+    //强制阻塞等待执行完毕
+    vkQueueWaitIdle(this->_graphicsDrawQueue);
+    //清理用于传输操作的命令缓冲区
+    vkFreeCommandBuffers(this->_logicDevice, this->_commandPool, 1, &commandBuffer);
+}
+
+//创建图像对象并分配显存
+void HelloTriangleApplication::createImage(
+    uint32_t width, 
+    uint32_t height, 
+    VkFormat format, 
+    VkImageTiling tiling, 
+    VkImageUsageFlags usage, 
+    VkMemoryPropertyFlags properties, 
+    VkImage& image, 
+    VkDeviceMemory& imageMemory) {
+    VkImageCreateInfo imageInfo{};
+    //1-创建图像对象，只定义，不占显存
+    imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    imageInfo.imageType = VK_IMAGE_TYPE_2D;
+    imageInfo.extent.width = width;
+    imageInfo.extent.height = height;
+    imageInfo.extent.depth = 1;
+    imageInfo.mipLevels = 1;
+    imageInfo.arrayLayers = 1;
+    imageInfo.format = format;
+    imageInfo.tiling = tiling;
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    imageInfo.usage = usage;
+    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateImage(this->_logicDevice, &imageInfo, nullptr, &image) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create image!");
+    }
+
+    //2-查询其显存需求，并分配图像对应的显存
+    VkMemoryRequirements memRequirements;
+    vkGetImageMemoryRequirements(this->_logicDevice, image, &memRequirements);
+
+    VkMemoryAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+    if (vkAllocateMemory(this->_logicDevice, &allocInfo, nullptr, &imageMemory) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate image memory!");
+    }
+
+    vkBindImageMemory(this->_logicDevice, image, imageMemory, 0);
+}
+
+//转换图像布局
+/**
+* VK_IMAGE_LAYOUT_PRESENT_SRC_KHR：最适合演示
+* VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL：最适合作为从片段着色器写入颜色的附件
+* VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL：作为传输操作中的源，是最佳选择，例如vkCmdCopyImageToBuffer
+* VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL：作为转运操作中的目的地，例如vkCmdCopyBufferToImage
+* VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL：最适合从着色器中采样
+*/
+void HelloTriangleApplication::transitionImageLayout(
+    VkImage image,
+    VkFormat format,
+    VkImageLayout oldLayout,
+    VkImageLayout newLayout) 
+{
+    VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
+    //流水线屏障通常用于：1-同步资源访问，例如确保在读取缓冲区之前完成写入操作，2-转换图像布局，3-转换队列组所有权，当使用独占模式时（VK_SHARING_MODE_EXCLUSIVE）
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = oldLayout;
+    barrier.newLayout = newLayout;
+
+    //忽略队列组--如果是队列族所有权转换，那将是队列族索引
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+    //指定受影响的图像及其具体部分，目前的图像不是数组，也没有 mipmapping 层级，因此只指定了一个层级和图层
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    //mipmap？
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    //imageArray？
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+
+    /**
+     * sourceStage (源管线阶段):
+     * 作用： 定义了屏障的等待条件。
+     * 通俗解释： 告诉 GPU：“在执行屏障（包括图像布局转换）之前，你必须等待之前提交的命令执行完 sourceStage 指定的阶段。”
+    */
+    
+    /**
+    * destinationStage (目标管线阶段):
+    * 作用： 定义了屏障的阻塞对象。
+    * 通俗解释： 告诉 GPU：“在屏障（以及图像布局转换）完全结束之前，后续提交的命令绝对不允许进入 destinationStage 指定的阶段及之后的阶段。”
+    */
+    VkPipelineStageFlags sourceStage;
+    VkPipelineStageFlags destinationStage;
+
+    //屏障主要用于同步，因此必须指定哪些涉及资源的操作必须在屏障之前执行（srcAccessMask），以及哪些涉及资源的操作必须等待屏障执行（dstAccessMask）
+    //barrier.srcAccessMask:表示sourceStage 阶段中已经做了什么类型的内存读写操作，    
+    //barrier.dstAccessMask:表示进入 destinationStage 阶段后，将会做什么类型的内存读写操作？
+    barrier.srcAccessMask = 0; // TODO
+    barrier.dstAccessMask = 0; // TODO
+
+    if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;//最早管线阶段
+        destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;//管线传输阶段
+    }
+    else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    else {
+        throw std::invalid_argument("unsupported layout transition!");
+    }
+
+
+    vkCmdPipelineBarrier(
+        commandBuffer,
+        sourceStage /* TODO */,//屏障之前的操作在哪个管线执行 
+        destinationStage /* TODO */,//屏障之后的操作将在哪个管线执行
+        0,
+        //屏障类型
+        0, nullptr,//内存屏障
+        0, nullptr,//缓冲区内存屏障
+        1, &barrier//图像内存屏障
+    );
+
+    this->endSingleTimeCommands(commandBuffer);
+}
+
+//复制图像
+void HelloTriangleApplication::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+    VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
+
+    VkBufferImageCopy region{};
+    region.bufferOffset = 0;//偏移字节
+    //像素在内存中的布局方式，例如，图像的行之间可以有一些填充字节，如果将这两个值都设置为 0，则表示像素像我们这里一样紧密排列
+    region.bufferRowLength = 0;
+    region.bufferImageHeight = 0;
+
+    region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    region.imageSubresource.mipLevel = 0;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+
+    region.imageOffset = { 0, 0, 0 };
+    region.imageExtent = {
+        width,
+        height,
+        1
+    };
+
+    vkCmdCopyBufferToImage(
+        commandBuffer,
+        buffer,
+        image,
+        //指示图像当前使用的布局
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1,//可以是数组，以便进行批量复制
+        &region
+    );
+
+    this->endSingleTimeCommands(commandBuffer);
+}
+
+//创建纹理图像
 void HelloTriangleApplication::createTextureImage()
 {
     std::string exeDir = getExeDirectory();
@@ -1878,7 +2170,7 @@ void HelloTriangleApplication::createTextureImage()
         throw std::runtime_error("failed to load texture image!");
     }
 
-    //暂存缓冲区
+    //1-创建暂存缓冲区（显存），存储image对应的数据（内存数据复制到显存）
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
     // 1. VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：CPU 可以通过映射(Mapping)访问这块内存。
@@ -1891,4 +2183,128 @@ void HelloTriangleApplication::createTextureImage()
     vkUnmapMemory(this->_logicDevice, stagingBufferMemory);
     stbi_image_free(pixels);
 
+    //2-创建图像对象并分配显存
+    this->createImage(
+        static_cast<uint32_t>(texWidth),
+        static_cast<uint32_t>(texHeight),
+        VK_FORMAT_R8G8B8A8_SRGB,
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        this->_textureImage,
+        this->_textureImageMemory);
+#if 0
+    //VK_IMAGE_TILING_LINEAR：纹理元素按照行优先顺序排列，就像我们的 pixels数组一样。
+    //VK_IMAGE_TILING_OPTIMAL：纹理元素按照实现定义的顺序排列，以实现最佳访问。
+    imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;//从着色器中高效访问
+
+    //VK_IMAGE_LAYOUT_UNDEFINEDGPU 无法使用，第一次转换就会丢弃纹素。
+    //VK_IMAGE_LAYOUT_PREINITIALIZEDGPU 无法使用，但第一次过渡将保留纹素。
+    imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    //独占模式--该图像将仅供一个队列族使用：即支持图形（因此也支持）传输操作的队列族。
+    imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+#endif // 0
+    //将暂存缓冲区复制到纹理图像
+    //第一步：将纹理图像过渡到VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局
+    this->transitionImageLayout(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    //第二步：执行缓冲区到图像的复制操作
+    this->copyBufferToImage(stagingBuffer, this->_textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+    //将纹理对象转换到着色器纹理采样
+    this->transitionImageLayout(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    //最后清理暂存缓冲区
+    vkDestroyBuffer(this->_logicDevice, stagingBuffer, nullptr);
+    vkFreeMemory(this->_logicDevice, stagingBufferMemory, nullptr);
+}
+
+VkImageView HelloTriangleApplication::createImageView(VkImage image, VkFormat format) {
+    VkImageViewCreateInfo viewInfo{};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = image;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = format;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    VkImageView imageView;
+    if (vkCreateImageView(this->_logicDevice, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create image view!");
+    }
+
+    return imageView;
+}
+
+//创建图像视图
+void HelloTriangleApplication::createTextureImageView()
+{
+    //VkImageViewCreateInfo viewInfo{};
+    //viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    //viewInfo.image = this->_textureImage;
+    //viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;//1D/2D/3D/立方图纹理？
+    //viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
+    ////subresourceRange字段描述了图像的用途以及需要访问图像的哪个部分
+    //viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    //viewInfo.subresourceRange.baseMipLevel = 0;
+    //viewInfo.subresourceRange.levelCount = 1;
+    //viewInfo.subresourceRange.baseArrayLayer = 0;
+    //viewInfo.subresourceRange.layerCount = 1;
+    //if (vkCreateImageView(this->_logicDevice, &viewInfo, nullptr, &this->_textureImageView) != VK_SUCCESS) {
+    //    throw std::runtime_error("failed to create texture image view!");
+    //}
+
+    this->_textureImageView = createImageView(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+}
+
+//创建纹理采样器
+void HelloTriangleApplication::createTextureSampler()
+{
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+     
+    /**
+    * typedef struct VkPhysicalDeviceProperties {
+    * uint32_t                            apiVersion;
+    * uint32_t                            driverVersion;
+    * uint32_t                            vendorID;
+    * uint32_t                            deviceID;
+    * VkPhysicalDeviceType                deviceType;
+    * char                                deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+    * uint8_t                             pipelineCacheUUID[VK_UUID_SIZE];
+    * VkPhysicalDeviceLimits              limits;
+    * VkPhysicalDeviceSparseProperties    sparseProperties;
+    * } VkPhysicalDeviceProperties;
+    */
+    //查询设备的基本属性，例如名称、类型和支持的 Vulkan 版本
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(this->_physicalDevice, &properties);
+    //各异向性过滤
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    //取值越大效果越好，性能越低，值越小效果越差，性能越高
+    samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    //如果启用了比较功能，则首先会将纹素与某个值进行比较，并将比较结果用于过滤操作。这主要用于阴影贴图的百分比接近度过滤 。
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+
+    //mipmap相关
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.mipLodBias = 0.0f;
+    samplerInfo.minLod = 0.0f;
+    samplerInfo.maxLod = 0.0f;
+    if (vkCreateSampler(this->_logicDevice, &samplerInfo, nullptr, &this->_textureSampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create texture sampler!");
+    }
 }
