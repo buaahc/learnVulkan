@@ -10,6 +10,7 @@
 #include"glm/vec3.hpp"
 #include"glm/mat4x4.hpp"
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES//强制vec2/vec4对其
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -35,19 +36,20 @@ struct SwapChainSupportDetails {
 
 //顶点信息
 struct Vertex {
-    glm::vec2 pos;
-    glm::vec3 color;
+    glm::vec3 _pos;
+    glm::vec3 _color;
+    glm::vec2 _texCoord;
     //顶点缓冲区层面信息-它告诉 GPU：从哪个内存缓冲区读取，读取的步长是多少
     static VkVertexInputBindingDescription getBindingDescription();
     //“属性”层面信息-它对应着顶点着色器（GLSL）中 layout(location = x) in vec3 pos; 里的 x
-    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions();
+    static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions();
 };
 
 //ubo
 struct UniformBufferObject {
-    glm::mat4 model;
-    glm::mat4 view;
-    glm::mat4 proj;
+    glm::mat4 _model;
+    glm::mat4 _view;
+    glm::mat4 _proj;
 };
 
 class HelloTriangleApplication {
@@ -182,22 +184,24 @@ public:
     void reCreateSwapChain();
     //销毁之前的交换链
     void cleanupSwapChain();
-    //顶点属性
-    const std::vector<Vertex> _vertices1 = {
-    {{0.0f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f,0.0f, 1.0f}}
-    };
 
+    //顶点属性
     const std::vector<Vertex> _vertices = {
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-    {{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+    {{-0.5f, -0.5f,0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, -0.5f,0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, 0.5f,0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    {{-0.5f, 0.5f,0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+
+
+     {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+    {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+    {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+    {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
     };
 
     const std::vector<uint16_t> _indices = {
-    0, 1, 2, 2, 3, 0
+    0, 1, 2, 2, 3, 0,
+    4, 5, 6, 6, 7, 4
     };
 
     //创建顶点缓冲区
@@ -247,14 +251,14 @@ public:
         VkImage& image,
         VkDeviceMemory& imageMemory);
     void createTextureImage();
-    VkImage _textureImage;
-    VkDeviceMemory _textureImageMemory;
+    VkImage _textureImage;//图像
+    VkDeviceMemory _textureImageMemory;//内存
+    VkImageView _textureImageView;//图像视图
     //图像布局转换
     void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
     //复制图像
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
     //图像视图
-    VkImageView _textureImageView;
     void createTextureImageView();
     //纹理采样器
     VkSampler _textureSampler;
@@ -266,4 +270,14 @@ private:
     //命令缓冲区记录结束
     void endSingleTimeCommands(VkCommandBuffer commandBuffer);
     VkImageView createImageView(VkImage image, VkFormat format);
+
+    //深度缓存相关
+    VkImage _depthImage;//图像
+    VkDeviceMemory _depthImageMemory;//内存
+    VkImageView _depthImageView;//图像视图
+
+    void createDepthResources();
+    VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
+    VkFormat findDepthFormat();
+
 };

@@ -92,6 +92,8 @@ void HelloTriangleApplication::initVulkan() {
     this->createFramebuffers();
     //创建命令池，用来管理命令缓冲区
     this->createCommandPool();
+    //创建深度缓存
+    this->createDepthResources();
     //创建纹理图像
     this->createTextureImage();
     //创建图像视图
@@ -1138,6 +1140,7 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     //ubo/imageSamplers等全局变量描述符绑定到管线
+    ////重点：描述符图纸绑定给管线，管线就知道ubo/texture长什么样了，(这对应了 GLSL 着色器里的 layout(binding = 0) uniform UBO { ... } 和 layout(binding = 1) uniform sampler2D texSampler;)
     pipelineLayoutInfo.pSetLayouts = &this->_descriptorSetLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
     pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
@@ -1374,7 +1377,9 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     * uint32_t                                    dynamicOffsetCount,//动态描述符的偏移量数组
     * const uint32_t*                             pDynamicOffsets
     */
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->_pipelineLayout, 0, 1, &this->_descriptorSets[this->_currentFrame], 0, nullptr);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->_pipelineLayout, 0, 1, 
+        &this->_descriptorSets[this->_currentFrame],//绑定的描述符集，ubo和textureSampler数据
+        0, nullptr);
     //发出绘制指令，真正执行“画”的动作
     /**
     * VkCommandBuffer                             commandBuffer,
@@ -1564,22 +1569,27 @@ VkVertexInputBindingDescription Vertex::getBindingDescription() {
 }
 
 //顶点属性描述--描述每个顶点内部的具体数据字段（例如：位置、颜色、法线等），以及它们如何与着色器（GLSL）中的 layout(location = x) 对应。
-std::array<VkVertexInputAttributeDescription, 2> Vertex::getAttributeDescriptions() {
+std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescriptions() {
 
     //VkVertexInputAttributeDescription通过binding连接缓冲区，通过location连接着色器中的变量
 
-    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+    std::array<VkVertexInputAttributeDescription, 3> attributeDescriptions{};
     //attributeDescriptions[0].binding表示从哪块缓冲区读取数据
     attributeDescriptions[0].binding = 0;//即上面VkVertexInputBindingDescription描述中，索引0的内存数据
     // attributeDescriptions[0].location表述数据传递给着色器中的location= x的变量
     attributeDescriptions[0].location = 0;//这个就是vertexShader--layout(location = 0)
-    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
-    attributeDescriptions[0].offset = offsetof(Vertex, pos);
+    attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attributeDescriptions[0].offset = offsetof(Vertex, _pos);
 
     attributeDescriptions[1].binding = 0;
     attributeDescriptions[1].location = 1;//vertexShader--layout(location = 1)
     attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attributeDescriptions[1].offset = offsetof(Vertex, color);
+    attributeDescriptions[1].offset = offsetof(Vertex, _color);
+
+    attributeDescriptions[2].binding = 0;
+    attributeDescriptions[2].location = 2;//vertexShader--layout(location = 2)
+    attributeDescriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[2].offset = offsetof(Vertex, _texCoord);
 
     return attributeDescriptions;
 }
@@ -1771,11 +1781,11 @@ void HelloTriangleApplication::updateUniformBuffer(uint32_t currentImage) {
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
     
     UniformBufferObject ubo{};
-    ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo._model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
-    ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    ubo.proj = glm::perspective(glm::radians(45.0f), this->_swapChainExtent.width / (float)this->_swapChainExtent.height, 0.1f, 10.0f);
-    ubo.proj[1][1] *= -1;
+    ubo._view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo._proj = glm::perspective(glm::radians(45.0f), this->_swapChainExtent.width / (float)this->_swapChainExtent.height, 0.1f, 10.0f);
+    ubo._proj[1][1] *= -1;
     memcpy(this->_uniformBuffersMappedData[currentImage], &ubo, sizeof(ubo));
 }
 
@@ -2307,4 +2317,122 @@ void HelloTriangleApplication::createTextureSampler()
     if (vkCreateSampler(this->_logicDevice, &samplerInfo, nullptr, &this->_textureSampler) != VK_SUCCESS) {
         throw std::runtime_error("failed to create texture sampler!");
     }
+}
+
+//描述符相关重点总结：
+/**
+* 第一阶段：画“图纸”（定义描述符集布局）:对应函数：createDescriptorSetLayout() 和 createGraphicsPipeline()
+* 在真正传递数据之前，你必须先告诉 Vulkan 管线你的着色器需要什么样的资源。
+* 定义槽位规则： 在 createDescriptorSetLayout 中，你定义了两个“插槽（Binding）”：
+* binding = 0：类型是 VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER，仅在**顶点着色器（Vertex Shader）**阶段可用。
+* binding = 1：类型是 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER，仅在**片元着色器（Fragment Shader）**阶段可用。
+* 绑定给管线： 在 createGraphicsPipeline 里，你通过 pipelineLayoutInfo.pSetLayouts = &this->_descriptorSetLayout 把这张“图纸”交给了图形管线（Pipeline Layout），这样管线就知道渲染时该期待哪些资源了。
+* (这对应了 GLSL 着色器里的 layout(binding = 0) uniform UBO { ... } 和 layout(binding = 1) uniform sampler2D texSampler;)
+* 
+* 
+* 
+* 第二阶段：生产“真实资源”（准备 UBO 和 Texture 显存）
+* 对应函数：createUniformBuffers()、createTextureImage() 等
+* 有了图纸，我们需要生产出真正装数据的实体资源：
+* UBO 资源： 在 createUniformBuffers() 中，你为每一帧（MAX_FRAMES_IN_FLIGHT）创建了一个 VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT 的缓冲区。并且映射（Map）到了 CPU 内存 _uniformBuffersMappedData 中。
+* 动态更新： 在渲染循环里，每次 drawFrame() 都会调用 updateUniformBuffer()，把你算好的 MVP 矩阵通过 memcpy 实时写进这个内存里。
+* Texture 资源：
+* createTextureImage()：读取本地 JPG 图片，搬运到显存 _textureImage 中。
+* createTextureImageView()：给图片配上说明书（_textureImageView）。
+* createTextureSampler()：创建采样器（_textureSampler），告诉 GPU 怎么读取这张图（比如线性过滤、重复寻址等）。
+* 
+* 
+* 第三阶段：把资源装进“包装盒”（分配并更新描述符集）
+* 对应函数：createDescriptorPool() 和 createDescriptorSets()
+* 资源有了，图纸有了，现在需要把具体的资源指派给具体的插槽。
+* 建仓库（Pool）： createDescriptorPool() 申请了一个可以容纳若干 UBO 和 Texture 描述符的“总仓库”。
+* 拿包装盒（Allocate Sets）： 在 createDescriptorSets() 里，你根据前面的图纸（Layout），从仓库里拿出了 MAX_FRAMES_IN_FLIGHT 个具体的“包装盒”（_descriptorSets）。
+* 填装连线（Update Sets）： 这是最关键的一步。你告诉 Vulkan：
+* “把 _descriptorSets[i] 里的 0号槽位，连到真正的 _uniformBuffers[i] 上。” （通过 bufferInfo 和 VkWriteDescriptorSet）
+* “把 _descriptorSets[i] 里的 1号槽位，连到真正的 _textureImageView 和 _textureSampler 上。” （通过 imageInfo 和 VkWriteDescriptorSet）
+* 最后调用 vkUpdateDescriptorSets，把这些指针链接信息永久写入显卡。
+* 
+* 
+* 第四阶段：渲染时的“插电使用”（绑定到 Command Buffer）
+* 对应函数：recordCommandBuffer()
+* 现在一切就绪，只需要在画图（Draw）的时候，把准备好的“包装盒”插到管线上就可以了。
+* 在 recordCommandBuffer 录制指令时会调用vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->_pipelineLayout,0, 1,
+* &this->_descriptorSets[this->_currentFrame], // <-- 关键：绑定当前帧的包装盒
+* 0, nullptr);
+*
+* 
+* 
+* //通过下面将_textureSampler与_textureImage/_textureImageView连接起来
+* VkDescriptorImageInfo imageInfo{};
+* imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+* imageInfo.imageView = this->_textureImageView;
+* imageInfo.sampler = this->_textureSampler;
+*/
+
+
+
+/**VkImageTiling:枚举（Enum）类型,核心作用是定义图像数据（像素）在物理内存中的排列方式（内存布局）。
+* VK_IMAGE_TILING_LINEAR（线性布局）,CPU 可以直接理解这种格式,GPU 访问效率非常低;
+* VK_IMAGE_TILING_OPTIMAL（最优布局 / 瓦片布局）,像素在内存中是以显卡厂商私有的、优化过的块状（Block/Tile）方式存放的,GPU 访问效率极高！
+* 在 Vulkan 开发中，标准的工作流（Workflow）通常是结合两者的：
+* 1-CPU 端读取一张 .png 图片。
+* 2-创建一个 LINEAR 布局的 Buffer 或 Image（作为暂存区），CPU 将图片数据原封不动地写进去。
+* 3-创建一个 OPTIMAL 布局的最终 Image（供 GPU 渲染用）。
+* 4-提交一个 Vulkan 命令，让显卡在内部把数据从 LINEAR 暂存区拷贝并转换到 OPTIMAL 的最终图像中。
+* 5-之后渲染时，GPU 就只使用那个 OPTIMAL 布局的图像了。
+*/
+
+VkFormat HelloTriangleApplication::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
+    for (VkFormat format : candidates) {
+        /**VkFormatProperties:
+        * linearTilingFeatures线性平铺支持的用例
+        * optimalTilingFeatures：支持最佳平铺效果的使用场景。
+        * bufferFeatures缓冲区支持的用例
+        */
+        VkFormatProperties props;
+        vkGetPhysicalDeviceFormatProperties(this->_physicalDevice, format, &props);
+
+        if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
+            return format;
+        }
+        else if (tiling == VK_IMAGE_TILING_OPTIMAL && (props.optimalTilingFeatures & features) == features) {
+            return format;
+        }
+
+    }
+    throw std::runtime_error("failed to find supported format!");
+}
+
+/**
+* VK_FORMAT_D32_SFLOAT：32 位浮点数表示深度
+* VK_FORMAT_D32_SFLOAT_S8_UINT：深度采用 32 位有符号浮点数，模板分量采用 8 位浮点数。
+* VK_FORMAT_D24_UNORM_S8_UINT：深度采用 24 位浮点数，模板分量采用 8 位浮点数。
+*/
+VkFormat HelloTriangleApplication::findDepthFormat() {
+    return findSupportedFormat(
+        { VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT },
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+    );
+}
+
+//模板格式？
+bool hasStencilComponent(VkFormat format) {
+    return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
+//深度缓存
+void HelloTriangleApplication::createDepthResources()
+{
+    VkFormat depthFormat = this->findDepthFormat();
+    this->createImage(
+        this->_swapChainExtent.width, 
+        this->_swapChainExtent.height, 
+        depthFormat, 
+        VK_IMAGE_TILING_OPTIMAL, 
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, //专用显存
+        this->_depthImage, this->_depthImageMemory);
+    this->_depthImageView = createImageView(this->_depthImage, depthFormat);
+
 }
