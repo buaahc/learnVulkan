@@ -6,7 +6,7 @@
 #define VK_USE_PLATFORM_WIN32_KHR
 //#define GLFW_INCLUDE_VULKAN
 //#include <GLFW/glfw3.h>
-#include"HelloTriangle.h"
+#include"loadModel.h"
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #include <cstdint> // Necessary for uint32_t
@@ -18,6 +18,9 @@
 #include <stb_image.h>
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
+
+const std::string MODEL_PATH = "models/viking_room.obj";
+const std::string TEXTURE_PATH = "images/viking_room.png";
 
 //定义可以同时处理2帧
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -1411,7 +1414,7 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     vkCmdBindVertexBuffers(commandBuffer, firstBinding, bindingCount, vertexBuffers, offsets);
 
     VkDeviceSize offset = 0;
-    vkCmdBindIndexBuffer(commandBuffer, this->_indexBuffer, offset, VK_INDEX_TYPE_UINT16);
+    vkCmdBindIndexBuffer(commandBuffer, this->_indexBuffer, offset, VK_INDEX_TYPE_UINT32);
 
     //绑定描述符集，VK_PIPELINE_BIND_POINT_GRAPHICS将描述符集绑定到图形管线
     /*
@@ -2243,7 +2246,9 @@ void HelloTriangleApplication::createTextureImage()
     std::string exeDir = getExeDirectory();
     int texWidth, texHeight, texChannels;
     //STBI_rgb_alpha--强制加载带有 alpha 通道的图像，即使图像本身没有 alpha 通道，这有助于将来与其他纹理保持一致
-    stbi_uc* pixels = stbi_load((exeDir + "/resources/images/texture.jpg").c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    //stbi_uc* pixels = stbi_load((exeDir + "/resources/images/texture.jpg").c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+    stbi_uc* pixels = stbi_load((exeDir + "/resources/" + TEXTURE_PATH).c_str(), &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+
     VkDeviceSize imageSize = texWidth * texHeight * 4;
 
     if (!pixels) {
