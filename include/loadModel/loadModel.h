@@ -271,8 +271,8 @@ private:
     */
 
     //顶点属性
-    const std::vector<Vertex> _vertices;
-    const std::vector<uint16_t> _indices;
+    std::vector<Vertex> _vertices;
+    std::vector<uint32_t> _indices;
 
     //创建顶点缓冲区
     VkBuffer _vertexBuffer;
@@ -306,15 +306,14 @@ private:
     * 它们的作用仅仅是向驱动描述一段元数据（Metadata），相当于一张“蓝图”或“空壳”，比如：
     * VkBuffer：记录了需要多大的空间、这个缓冲区是用来做顶点缓冲还是统一缓冲（Usage Flags）等。
     * VkImage：记录了图像的宽宽高、像素格式（Format）、是 2D 还是 3D、是否需要生成 Mipmap 等。
-    * 真实的、用来存储数据的物理空间，确确实实全部是由 VkDeviceMemory 来分配和代表的
-    * 
+    * 真实的、用来存储数据的物理空间，全部是由 VkDeviceMemory 来分配和代表的
     * 
     * 
     * 标准的 Vulkan 资源创建流程:
     * 1-创建空壳：调用 vkCreateBuffer，得到一个纯逻辑的 VkBuffer 句柄。
     * 2-量尺寸：调用 vkGetBufferMemoryRequirements。因为不同 GPU 对内存的“对齐要求（Alignment）”不同，必须问 GPU：“为了装下我刚才描述的那个 Buffer，你需要什么样的内存？需要怎么对齐？”
-    * 分配物理内存：调用 vkAllocateMemory 申请真实的 VkDeviceMemory（或者复用你之前早就申请好的大块内存池）。
-    * 注入灵魂：调用 vkBindBufferMemory，告诉 GPU：“把这个 VkBuffer 句柄，绑定到这块 VkDeviceMemory 的特定偏移量（Offset）上”。
+    * 3-分配物理内存：调用 vkAllocateMemory 申请真实的 VkDeviceMemory（或者复用你之前早就申请好的大块内存池）。
+    * 4-注入灵魂：调用 vkBindBufferMemory，告诉 GPU：“把这个 VkBuffer 句柄，绑定到这块 VkDeviceMemory 的特定偏移量（Offset）上”。
     * 直到第 4 步完成，这个 VkBuffer / VkImage 才有真实的物理存储，才可以被 GPU 读写。
     * 
     * 
@@ -322,4 +321,6 @@ private:
     * 当调用 vkGetSwapchainImagesKHR 获取用于直接显示到屏幕上的 VkImage 时，这些 Image 是由底层的操作系统窗口管理器（如 Windows 的 DWM、Linux 的 Wayland/X11）预先创建并分配好内存的。
     * 不需要也不能为它们分配或绑定 VkDeviceMemory。
     */
+
+    void loadModel();
 };

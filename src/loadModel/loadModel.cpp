@@ -4,8 +4,6 @@
 
 
 #define VK_USE_PLATFORM_WIN32_KHR
-//#define GLFW_INCLUDE_VULKAN
-//#include <GLFW/glfw3.h>
 #include"loadModel.h"
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
@@ -14,8 +12,13 @@
 #include <algorithm> // Necessary for std::clamp
 #include <chrono>
 #include "tools.h"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 
@@ -102,6 +105,7 @@ void HelloTriangleApplication::initVulkan() {
     this->createTextureImageView();
     //创建纹理采样器
     this->createTextureSampler();
+    this->loadModel();
     //创建顶点缓冲区
     this->createVertexBuffer();
     //创建索引缓冲区
@@ -2511,4 +2515,36 @@ void HelloTriangleApplication::createDepthResources()
     this->_depthImageView = createImageView(this->_depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
 
     transitionImageLayout(this->_depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+}
+
+void HelloTriangleApplication::loadModel()
+{
+    tinyobj::attrib_t attrib;
+    std::vector<tinyobj::shape_t> shapes;
+    std::vector<tinyobj::material_t> materials;
+    std::string err;
+    std::string exeDir = getExeDirectory();
+    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, (exeDir + "/resources/" + MODEL_PATH).c_str())) {
+        throw std::runtime_error(err);
+    }
+    for (const auto& shape : shapes) {
+        for (const auto& index : shape.mesh.indices) {//index表示一个顶点（Vertex）
+            Vertex vertex{};
+            //index.vertex_index代表的是当前这一个顶点的位置数据（Position）在全局顶点数组（attrib.vertices）中的索引（编号）。
+            //attrib.vertices 是一个扁平的一维 float 数组。所有的顶点坐标在里面是这样挨个存放的：[x0, y0, z0, x1, y1, z1, x2, y2, z2, ...]
+            vertex._pos = {
+                attrib.vertices[3 * index.vertex_index + 0],//三个坐标分量
+                attrib.vertices[3 * index.vertex_index + 1],
+                attrib.vertices[3 * index.vertex_index + 2]
+            };
+            vertex._texCoord = {
+                attrib.texcoords[2 * index.texcoord_index + 0],
+                1.0 - attrib.texcoords[2 * index.texcoord_index + 1]
+            };
+
+            this->_vertices.push_back(vertex);
+            this->_indices.push_back(this->_indices.size());
+        }
+    }
+
 }
