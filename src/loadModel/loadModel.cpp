@@ -11,6 +11,7 @@
 #include <limits> // Necessary for std::numeric_limits
 #include <algorithm> // Necessary for std::clamp
 #include <chrono>
+#include <unordered_map>
 #include "tools.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -1652,6 +1653,11 @@ std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescription
     return attributeDescriptions;
 }
 
+bool Vertex::operator==(const Vertex& other) const {
+    return _pos == other._pos && _color == other._color && _texCoord == other._texCoord;
+}
+
+
 //查询内存类型
 uint32_t HelloTriangleApplication::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
     //VkMemoryType    memoryTypes[VK_MAX_MEMORY_TYPES];//内存类型
@@ -2527,6 +2533,7 @@ void HelloTriangleApplication::loadModel()
     if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, (exeDir + "/resources/" + MODEL_PATH).c_str())) {
         throw std::runtime_error(err);
     }
+    std::unordered_map<Vertex, uint32_t> uniqueVertices{};
     for (const auto& shape : shapes) {
         for (const auto& index : shape.mesh.indices) {//index表示一个顶点（Vertex）
             Vertex vertex{};
@@ -2541,9 +2548,18 @@ void HelloTriangleApplication::loadModel()
                 attrib.texcoords[2 * index.texcoord_index + 0],
                 1.0 - attrib.texcoords[2 * index.texcoord_index + 1]
             };
-
+#if 0
             this->_vertices.push_back(vertex);
             this->_indices.push_back(this->_indices.size());
+#else
+            //确保顶点去重
+            if (uniqueVertices.count(vertex) == 0) {
+                uniqueVertices[vertex] = static_cast<uint32_t>(this->_vertices.size());
+                this->_vertices.push_back(vertex);
+            }
+
+            this->_indices.push_back(uniqueVertices[vertex]);
+#endif // 0
         }
     }
 

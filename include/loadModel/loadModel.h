@@ -14,7 +14,8 @@
 #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES//强制vec2/vec4对其
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/hash.hpp>
 
 //队列族
 struct QueueFamilyIndices {
@@ -43,7 +44,18 @@ struct Vertex {
     static VkVertexInputBindingDescription getBindingDescription();
     //“属性”层面信息-它对应着顶点着色器（GLSL）中 layout(location = x) in vec3 pos; 里的 x
     static std::array<VkVertexInputAttributeDescription, 3> getAttributeDescriptions();
+    bool operator==(const Vertex& other) const;
 };
+
+namespace std {
+    template<> struct hash<Vertex> {
+        size_t operator()(Vertex const& vertex) const {
+            return ((hash<glm::vec3>()(vertex._pos) ^
+                (hash<glm::vec3>()(vertex._color) << 1)) >> 1) ^
+                (hash<glm::vec2>()(vertex._texCoord) << 1);
+        }
+    };
+}
 
 //ubo
 struct UniformBufferObject {
