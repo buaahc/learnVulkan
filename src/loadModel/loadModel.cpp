@@ -100,12 +100,11 @@ void HelloTriangleApplication::initVulkan() {
     this->createDepthResources();
     //创建帧缓冲，将renderPass和vkImageView连接起来，renderPass即可绘制到vkImageView
     this->createFramebuffers();
-    //创建纹理图像
+    //创建纹理图像及图像视图
     this->createTextureImage();
-    //创建图像视图
-    this->createTextureImageView();
     //创建纹理采样器
     this->createTextureSampler();
+    //读取模型数据到内存，为顶点/索引缓冲区做准备
     this->loadModel();
     //创建顶点缓冲区
     this->createVertexBuffer();
@@ -789,7 +788,7 @@ void HelloTriangleApplication::createSwapChain() {
     this->_swapChainImageViews.resize(this->_swapChainImages.size());
     for (size_t i = 0; i < this->_swapChainImages.size(); i++)
     {
-        this->_swapChainImageViews[i] = createImageView(this->_swapChainImages[i], _swapChainImageformat, VK_IMAGE_ASPECT_COLOR_BIT);
+        this->_swapChainImageViews[i] = createImageView(this->_swapChainImages[i], _swapChainImageformat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
     }
 }
 
@@ -1805,6 +1804,8 @@ void HelloTriangleApplication::createIndexBuffer()
 
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
+    // 1. VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：CPU 可以通过映射(Mapping)访问这块内存。
+    // 2. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT：内存连贯性。保证 CPU 写入后 GPU 立即能看到，不需要手动调用 vkFlushMappedMemoryRanges 刷新缓存。
     createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
     void* data;
@@ -1813,6 +1814,7 @@ void HelloTriangleApplication::createIndexBuffer()
     vkUnmapMemory(this->_logicDevice, stagingBufferMemory);
 
     //VK_BUFFER_USAGE_INDEX_BUFFER_BIT：缓冲区用作顶点索引
+    // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT，显卡专用内存，GPU读取非常快
     createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, this->_indexBuffer, this->_indexBufferMemory);
 
     copyBuffer(stagingBuffer, this->_indexBuffer, bufferSize);
@@ -2064,7 +2066,8 @@ void HelloTriangleApplication::endSingleTimeCommands(VkCommandBuffer commandBuff
 //创建图像对象并分配显存
 void HelloTriangleApplication::createImage(
     uint32_t width, 
-    uint32_t height, 
+    uint32_t height,
+    uint32_t mipLevels,
     VkFormat format, 
     VkImageTiling tiling, 
     VkImageUsageFlags usage, 
@@ -2078,7 +2081,7 @@ void HelloTriangleApplication::createImage(
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
     imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = 1;
+    imageInfo.mipLevels = mipLevels;
     imageInfo.arrayLayers = 1;
     imageInfo.format = format;
     imageInfo.tiling = tiling;
@@ -2119,7 +2122,8 @@ void HelloTriangleApplication::transitionImageLayout(
     VkImage image,
     VkFormat format,
     VkImageLayout oldLayout,
-    VkImageLayout newLayout) 
+    VkImageLayout newLayout,
+    uint32_t mipLevels)
 {
     VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
     //流水线屏障通常用于：1-同步资源访问，例如确保在读取缓冲区之前完成写入操作，2-转换图像布局，3-转换队列组所有权，当使用独占模式时（VK_SHARING_MODE_EXCLUSIVE）
@@ -2137,7 +2141,7 @@ void HelloTriangleApplication::transitionImageLayout(
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     //mipmap？
     barrier.subresourceRange.baseMipLevel = 0;
-    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.levelCount = mipLevels;
     //imageArray？
     barrier.subresourceRange.baseArrayLayer = 0;
     barrier.subresourceRange.layerCount = 1;
@@ -2250,6 +2254,52 @@ void HelloTriangleApplication::copyBufferToImage(VkBuffer buffer, VkImage image,
     this->endSingleTimeCommands(commandBuffer);
 }
 
+/*
+* Usage (图像用途)：
+* TRANSFER_SRC_BIT：我要把它当数据源。
+* TRANSFER_DST_BIT：我要把它当数据目标。
+* SAMPLED_BIT：我要让着色器去读取它。
+* 这就像是一个“职业资格证”，在创建图像时就定死了，告诉 GPU 这个图像未来允许进行哪些操作。
+* 
+* 
+* Tiling (数据物理排列方式) —— “内存里到底是怎么存的？”
+* LINEAR (线性)：像素在内存里像数组一样，一行一行挨着存。CPU 能直接看懂，但 GPU 读取很慢。
+* OPTIMAL (最优)：像素在内存里被显卡厂商打乱了，按照特定的“瓦片(Tile) / 块(Block)”重新排列。CPU 看不懂这个乱码，但 GPU 的纹理缓存读取速度直接起飞。
+* 
+* 
+* Layout (布局/状态) —— “当前是为了适应哪项工作，将图像切换成的某种状态”
+* 
+* 1. VK_IMAGE_LAYOUT_UNDEFINED ：是“图像对象（VkImage）刚在GPU显存里被创建出来时的初始状态”，
+* 注意：使用 stbi_load 从硬盘读取的图片数据还没有存进这个图像里。此时 GPU 显存里只是一片未初始化的“垃圾内存”，所以叫“未定义”。
+* 因为里面全是垃圾，所以我们在做第一次状态转换时，GPU 不用耗费性能去保护里面的旧数据，直接覆盖就行。
+* 
+* 2. VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL （完全正确 💯）： 告诉 GPU 把图像转换成源图像（即传输图像出处）的最佳布局。
+* 应用场景： 当要把这个图像复制给别人，或者生成 Mipmap 时把它当作上一层级（被抽血的一方）时使用。
+* 
+* 3. VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL （完全正确 💯）： 告诉 GPU 把图像转换成目标图像（即被传输写入）的最佳布局。
+* 应用场景： 当你要把暂存缓冲区（Staging Buffer）里的图片数据拷贝到图像里，或者生成 Mipmap 时把它当作下一层级（接受血液的一方）时使用。
+* 
+* 4. VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL （完全正确 💯）：用于着色器读取展示。
+* 应用场景： 一切数据搬运、Mipmap 缩放都搞定了，最终端上桌，让片元着色器（Fragment Shader）在画三角形时去采样它的颜色。
+* 
+* 
+* 终极串联：一张纹理的“一生”：
+* 把你总结的这四个布局，按照你代码里的执行顺序串起来，就是一个标准的 Vulkan 纹理加载流水线：
+* 诞生： 刚调用 vkCreateImage 分配好显存。
+* 👉 此时是 UNDEFINED
+* 
+* 准备收货： 准备把内存里的图片像素拷给它。
+* 👉 转换成 TRANSFER_DST
+* 
+* 拷贝动作： 执行 vkCmdCopyBufferToImage。
+* 生成 Mipmap (可选)：
+* 👉 在各层级之间不断切换 TRANSFER_SRC 和 TRANSFER_DST，完成缩放拷贝。
+* 
+* 准备上岗： 数据全都准备好了，要开始渲染了。
+* 👉 最终全体转换成 SHADER_READ_ONLY
+* 
+* 
+*/
 //创建纹理图像
 void HelloTriangleApplication::createTextureImage()
 {
@@ -2264,13 +2314,19 @@ void HelloTriangleApplication::createTextureImage()
     if (!pixels) {
         throw std::runtime_error("failed to load texture image!");
     }
-
+    //std::floor根据最大维度向下取整，最后加1是加上图片自身的那一层，比如图片4*4/2*2/1*1，mipmap：2 + 1 = 3
+    this->_mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(texWidth, texHeight)))) + 1;
     //1-创建暂存缓冲区（显存），存储image对应的数据（内存数据复制到显存）
     VkBuffer stagingBuffer;
     VkDeviceMemory stagingBufferMemory;
-    // 1. VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：CPU 可以通过映射(Mapping)访问这块内存。
+    // 1. VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：就是任务管理器的显示共享GPU内存（其实就是内存），CPU 可以通过映射(Mapping)访问这块内存。
     // 2. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT：内存连贯性。保证 CPU 写入后 GPU 立即能看到，不需要手动调用 vkFlushMappedMemoryRanges 刷新缓存。
-    createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+    createBuffer(
+        imageSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+        stagingBuffer, 
+        stagingBufferMemory);
 
     void* data;
     vkMapMemory(this->_logicDevice, stagingBufferMemory, 0, imageSize, 0, &data);
@@ -2279,12 +2335,18 @@ void HelloTriangleApplication::createTextureImage()
     stbi_image_free(pixels);
 
     //2-创建图像对象并分配显存
+    //VK_IMAGE_TILING_LINEAR（线性布局）,纹理元素按照行优先顺序排列，就像我们的 pixels数组一样，CPU 可以直接理解这种格式,GPU 访问效率非常低;
+    //VK_IMAGE_TILING_OPTIMAL（最优布局 / 瓦片布局）, 像素在内存中是以显卡厂商私有的、优化过的块状（Block / Tile）方式存放的, GPU 访问效率极高！
+    //VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT，显卡专用内存，GPU读取非常快
     this->createImage(
         static_cast<uint32_t>(texWidth),
         static_cast<uint32_t>(texHeight),
+        this->_mipLevels,
         VK_FORMAT_R8G8B8A8_SRGB,
-        VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_IMAGE_TILING_OPTIMAL,//图像的内存排列方式
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | //图像用途-图像是传输的源：用于生成mipmap
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | //图像用途-图像是传输的目标：接受暂存缓冲区的数据
+        VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         this->_textureImage,
         this->_textureImageMemory);
@@ -2302,26 +2364,45 @@ void HelloTriangleApplication::createTextureImage()
 #endif // 0
     //将暂存缓冲区复制到纹理图像
     //第一步：将纹理图像过渡到VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局
-    this->transitionImageLayout(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    //第二步：执行缓冲区到图像的复制操作
+    this->transitionImageLayout(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, this->_mipLevels);
+    //第二步：执行缓冲区到图像的复制操作，暂存缓冲区只能用于填充mip级别0，需要手动生成mipmap
     this->copyBufferToImage(stagingBuffer, this->_textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
+    
     //将纹理对象转换到着色器纹理采样
-    this->transitionImageLayout(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    //this->transitionImageLayout(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, this->_mipLevels);
 
     //最后清理暂存缓冲区
     vkDestroyBuffer(this->_logicDevice, stagingBuffer, nullptr);
     vkFreeMemory(this->_logicDevice, stagingBufferMemory, nullptr);
+
+    //Vulkan 允许我们独立地转换图像的每个 mip 级别，每次 blit 操作一次只会处理两个 mip 级别，因此我们可以在两次 blit 命令之间将每个级别转换为最佳布局。
+    // 这将使纹理图像的每个层级都保留在。每个层级在 blit 命令读取完成后都会由VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL过渡到VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+    //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
+    // 
+    // 
+    //创建图像视图
+    this->_textureImageView = this->createImageView(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, this->_mipLevels);
 }
 
-VkImageView HelloTriangleApplication::createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags) {
+VkImageView HelloTriangleApplication::createImageView(
+    VkImage image, 
+    VkFormat format, 
+    VkImageAspectFlags aspectFlags,
+    uint32_t mipLevels)
+{
+
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image = image;
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;//1D/2D/3D/立方图纹理？
     viewInfo.format = format;
+    //这块需要解释一下
+    //subresourceRange字段描述了图像的用途以及需要访问图像的哪个部分
     viewInfo.subresourceRange.aspectMask = aspectFlags;
+    
     viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.levelCount = mipLevels;
+
     viewInfo.subresourceRange.baseArrayLayer = 0;
     viewInfo.subresourceRange.layerCount = 1;
 
@@ -2331,27 +2412,6 @@ VkImageView HelloTriangleApplication::createImageView(VkImage image, VkFormat fo
     }
 
     return imageView;
-}
-
-//创建图像视图
-void HelloTriangleApplication::createTextureImageView()
-{
-    //VkImageViewCreateInfo viewInfo{};
-    //viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    //viewInfo.image = this->_textureImage;
-    //viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;//1D/2D/3D/立方图纹理？
-    //viewInfo.format = VK_FORMAT_R8G8B8A8_SRGB;
-    ////subresourceRange字段描述了图像的用途以及需要访问图像的哪个部分
-    //viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    //viewInfo.subresourceRange.baseMipLevel = 0;
-    //viewInfo.subresourceRange.levelCount = 1;
-    //viewInfo.subresourceRange.baseArrayLayer = 0;
-    //viewInfo.subresourceRange.layerCount = 1;
-    //if (vkCreateImageView(this->_logicDevice, &viewInfo, nullptr, &this->_textureImageView) != VK_SUCCESS) {
-    //    throw std::runtime_error("failed to create texture image view!");
-    //}
-
-    this->_textureImageView = createImageView(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
 //创建纹理采样器
@@ -2457,7 +2517,7 @@ void HelloTriangleApplication::createTextureSampler()
 
 
 /**VkImageTiling:枚举（Enum）类型,核心作用是定义图像数据（像素）在物理内存中的排列方式（内存布局）。
-* VK_IMAGE_TILING_LINEAR（线性布局）,CPU 可以直接理解这种格式,GPU 访问效率非常低;
+* VK_IMAGE_TILING_LINEAR（线性布局）,纹理元素按照行优先顺序排列，就像我们的 pixels数组一样，CPU 可以直接理解这种格式,GPU 访问效率非常低;
 * VK_IMAGE_TILING_OPTIMAL（最优布局 / 瓦片布局）,像素在内存中是以显卡厂商私有的、优化过的块状（Block/Tile）方式存放的,GPU 访问效率极高！
 * 在 Vulkan 开发中，标准的工作流（Workflow）通常是结合两者的：
 * 1-CPU 端读取一张 .png 图片。
@@ -2507,20 +2567,21 @@ bool hasStencilComponent(VkFormat format) {
 }
 
 //深度缓存-查找格式/创建图像
+//VK_IMAGE_TILING_LINEAR（线性布局）, CPU 可以直接理解这种格式, GPU 访问效率非常低;
+//VK_IMAGE_TILING_OPTIMAL（最优布局 / 瓦片布局）, 像素在内存中是以显卡厂商私有的、优化过的块状（Block / Tile）方式存放的, GPU 访问效率极高！
 void HelloTriangleApplication::createDepthResources()
 {
     VkFormat depthFormat = this->findDepthFormat();
     this->createImage(
         this->_swapChainExtent.width, 
-        this->_swapChainExtent.height, 
+        this->_swapChainExtent.height, 1,
         depthFormat, 
         VK_IMAGE_TILING_OPTIMAL, 
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, //专用显存
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, //VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT，显卡专用内存，GPU读取非常快
         this->_depthImage, this->_depthImageMemory);
-    this->_depthImageView = createImageView(this->_depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
-
-    transitionImageLayout(this->_depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+    this->_depthImageView = this->createImageView(this->_depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1);
+    this->transitionImageLayout(this->_depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1);
 }
 
 void HelloTriangleApplication::loadModel()
