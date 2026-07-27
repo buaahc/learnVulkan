@@ -2220,7 +2220,12 @@ void HelloTriangleApplication::transitionImageLayout(
 }
 
 //复制图像
-void HelloTriangleApplication::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+void HelloTriangleApplication::copyBufferToImage(
+    VkBuffer buffer, 
+    VkImage image, 
+    uint32_t width, 
+    uint32_t height) 
+{
     VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
 
     VkBufferImageCopy region{};
@@ -2250,6 +2255,53 @@ void HelloTriangleApplication::copyBufferToImage(VkBuffer buffer, VkImage image,
         1,//可以是数组，以便进行批量复制
         &region
     );
+
+    this->endSingleTimeCommands(commandBuffer);
+}
+
+void HelloTriangleApplication::generateMipmaps(
+    VkImage image, 
+    int32_t texWidth, 
+    int32_t texHeight, 
+    uint32_t mipLevels)
+{
+    VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
+
+    //配置内存屏障：内存屏障 (Barrier) 在 Vulkan 中有两个主要作用：同步内存访问和转换图像布局 (Image Layout)。
+    VkImageMemoryBarrier barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.image = image;//处理的目标图像
+    //忽略队列组--如果是队列族所有权转换，那将是队列族索引
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    //subresourceRange 指定了这个屏障作用于图像的哪个部分。
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;//表明这是一个颜色图像（而不是深度/模板图像）。
+    barrier.subresourceRange.baseArrayLayer = 0;//表明只处理图像的第 1 层（这不是纹理数组或立方体贴图）
+    barrier.subresourceRange.layerCount = 1;//表明只处理图像的第 1 层（这不是纹理数组或立方体贴图）
+    barrier.subresourceRange.levelCount = 1;////表明只处理图像mipmap层级，1表示只处理1级
+
+    //屏障主要用于同步，因此必须指定哪些涉及资源的操作必须在屏障之前执行（srcAccessMask），以及哪些涉及资源的操作必须等待屏障执行（dstAccessMask）
+    //barrier.srcAccessMask:表示sourceStage 阶段中已经做了什么类型的内存读写操作，    
+    //barrier.dstAccessMask:表示进入 destinationStage 阶段后，将会做什么类型的内存读写操作？
+
+    int32_t mipWidth = texWidth;
+    int32_t mipHeight = texHeight;
+
+    for (uint32_t i = 1; i < mipLevels; i++) {
+        barrier.subresourceRange.baseMipLevel = i - 1;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+        vkCmdPipelineBarrier(commandBuffer,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrier);
+    }
 
     this->endSingleTimeCommands(commandBuffer);
 }
@@ -2290,8 +2342,8 @@ void HelloTriangleApplication::copyBufferToImage(VkBuffer buffer, VkImage image,
 * 
 * 准备收货： 准备把内存里的图片像素拷给它。
 * 👉 转换成 TRANSFER_DST
-* 
 * 拷贝动作： 执行 vkCmdCopyBufferToImage。
+* 
 * 生成 Mipmap (可选)：
 * 👉 在各层级之间不断切换 TRANSFER_SRC 和 TRANSFER_DST，完成缩放拷贝。
 * 
@@ -2334,7 +2386,7 @@ void HelloTriangleApplication::createTextureImage()
     vkUnmapMemory(this->_logicDevice, stagingBufferMemory);
     stbi_image_free(pixels);
 
-    //2-创建图像对象并分配显存
+    //2-创建图像对象并分配显存（包括mipmap层的显存）
     //VK_IMAGE_TILING_LINEAR（线性布局）,纹理元素按照行优先顺序排列，就像我们的 pixels数组一样，CPU 可以直接理解这种格式,GPU 访问效率非常低;
     //VK_IMAGE_TILING_OPTIMAL（最优布局 / 瓦片布局）, 像素在内存中是以显卡厂商私有的、优化过的块状（Block / Tile）方式存放的, GPU 访问效率极高！
     //VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT，显卡专用内存，GPU读取非常快
@@ -2363,9 +2415,9 @@ void HelloTriangleApplication::createTextureImage()
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 #endif // 0
     //将暂存缓冲区复制到纹理图像
-    //第一步：将纹理图像过渡到VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局
+    //第一步：将纹理图像过渡到VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局，所有的mipmap层也都转化成了VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局，准备接收数据
     this->transitionImageLayout(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, this->_mipLevels);
-    //第二步：执行缓冲区到图像的复制操作，暂存缓冲区只能用于填充mip级别0，需要手动生成mipmap
+    //第二步：执行缓冲区到图像的复制操作，暂存缓冲区只能用于填充mip级别0，mipmap层并没有被填充（但是mipmap层显存已经创建好了），需要手动生成mipmap层
     this->copyBufferToImage(stagingBuffer, this->_textureImage, static_cast<uint32_t>(texWidth), static_cast<uint32_t>(texHeight));
     
     //将纹理对象转换到着色器纹理采样
@@ -2397,13 +2449,13 @@ VkImageView HelloTriangleApplication::createImageView(
     viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;//1D/2D/3D/立方图纹理？
     viewInfo.format = format;
     //这块需要解释一下
-    //subresourceRange字段描述了图像的用途以及需要访问图像的哪个部分
-    viewInfo.subresourceRange.aspectMask = aspectFlags;
+    //subresourceRange字段描述了图像的用途
+    viewInfo.subresourceRange.aspectMask = aspectFlags;//需要访问图像的哪个部分：颜色/深度/模板等
     
     viewInfo.subresourceRange.baseMipLevel = 0;
     viewInfo.subresourceRange.levelCount = mipLevels;
 
-    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.baseArrayLayer = 0;//是否是纹理数组或者立方体问题，0表示一级普通纹理
     viewInfo.subresourceRange.layerCount = 1;
 
     VkImageView imageView;

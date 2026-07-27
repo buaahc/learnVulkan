@@ -236,6 +236,13 @@ public:
         VkMemoryPropertyFlags properties,
         VkImage& image,
         VkDeviceMemory& imageMemory);
+
+    void generateMipmaps(
+        VkImage image, 
+        int32_t texWidth, 
+        int32_t texHeight, 
+        uint32_t mipLevels);
+    
     void createTextureImage();
 
 
