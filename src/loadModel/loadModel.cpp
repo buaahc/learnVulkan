@@ -2278,7 +2278,7 @@ void HelloTriangleApplication::generateMipmaps(
     barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;//表明这是一个颜色图像（而不是深度/模板图像）。
     barrier.subresourceRange.baseArrayLayer = 0;//表明只处理图像的第 1 层（这不是纹理数组或立方体贴图）
     barrier.subresourceRange.layerCount = 1;//表明只处理图像的第 1 层（这不是纹理数组或立方体贴图）
-    barrier.subresourceRange.levelCount = 1;////表明只处理图像mipmap层级，1表示只处理1级
+    barrier.subresourceRange.levelCount = 1;//在生成 Mipmap 的过程中，需要逐级处理，会把第 i−1级作为读取源（Source），把第i级作为写入目标（Destination），因此屏障每次只针对单独的一级 Mipmap 进行布局转换
 
     //屏障主要用于同步，因此必须指定哪些涉及资源的操作必须在屏障之前执行（srcAccessMask），以及哪些涉及资源的操作必须等待屏障执行（dstAccessMask）
     //barrier.srcAccessMask:表示sourceStage 阶段中已经做了什么类型的内存读写操作，    
@@ -2288,9 +2288,10 @@ void HelloTriangleApplication::generateMipmaps(
     int32_t mipHeight = texHeight;
 
     for (uint32_t i = 1; i < mipLevels; i++) {
-        barrier.subresourceRange.baseMipLevel = i - 1;
-        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        //第一步将上层源数据转化为VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局
+        barrier.subresourceRange.baseMipLevel = i - 1;//i - 1层，即上一层的源数据
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;//初始的图像被创建且数据数据填充后，mipmap层都是VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局
+        barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;//转化到源数据布局
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
@@ -2301,6 +2302,29 @@ void HelloTriangleApplication::generateMipmaps(
             0, nullptr,
             0, nullptr,
             1, &barrier);
+
+        VkImageBlit blit{};
+        //指定mipmap源数据（i-1层），已转化为VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL布局
+        blit.srcOffsets[0] = { 0, 0, 0 };
+        blit.srcOffsets[1] = { mipWidth, mipHeight, 1 };
+        blit.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.srcSubresource.mipLevel = i - 1;
+        blit.srcSubresource.baseArrayLayer = 0;
+        blit.srcSubresource.layerCount = 1;
+        //指定mipmap目标数据（i层），仍然是VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL布局
+        blit.dstOffsets[0] = { 0, 0, 0 };
+        blit.dstOffsets[1] = { mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1 };
+        blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        blit.dstSubresource.mipLevel = i;
+        blit.dstSubresource.baseArrayLayer = 0;
+        blit.dstSubresource.layerCount = 1;
+
+        vkCmdBlitImage(commandBuffer,
+            image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            1, &blit,
+            VK_FILTER_LINEAR);//使用与创建vkSampler相同的过滤方式
+
     }
 
     this->endSingleTimeCommands(commandBuffer);
@@ -2326,7 +2350,7 @@ void HelloTriangleApplication::generateMipmaps(
 * 因为里面全是垃圾，所以我们在做第一次状态转换时，GPU 不用耗费性能去保护里面的旧数据，直接覆盖就行。
 * 
 * 2. VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL （完全正确 💯）： 告诉 GPU 把图像转换成源图像（即传输图像出处）的最佳布局。
-* 应用场景： 当要把这个图像复制给别人，或者生成 Mipmap 时把它当作上一层级（被抽血的一方）时使用。
+* 应用场景： 当要把这个图像复制给别人，或者生成 Mipmap 时把它当作上一层级时使用。
 * 
 * 3. VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL （完全正确 💯）： 告诉 GPU 把图像转换成目标图像（即被传输写入）的最佳布局。
 * 应用场景： 当你要把暂存缓冲区（Staging Buffer）里的图片数据拷贝到图像里，或者生成 Mipmap 时把它当作下一层级（接受血液的一方）时使用。
