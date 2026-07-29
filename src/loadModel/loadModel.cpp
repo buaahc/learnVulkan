@@ -2187,7 +2187,7 @@ void HelloTriangleApplication::transitionImageLayout(
         destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;//管线传输阶段
     }
     else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
-        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;//原布局是VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL（即被写入目标），所以转换之前要保证被写入完成
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 
         sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -2288,13 +2288,14 @@ void HelloTriangleApplication::generateMipmaps(
     int32_t mipHeight = texHeight;
 
     for (uint32_t i = 1; i < mipLevels; i++) {
-        //第一步将上层源数据转化为VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局
+        //第一步将上层源数据转化为VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局，以便作为mipmap数据源使用
         barrier.subresourceRange.baseMipLevel = i - 1;//i - 1层，即上一层的源数据
         barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;//初始的图像被创建且数据数据填充后，mipmap层都是VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局
         barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;//转化到源数据布局
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 
+        //This transition will wait for level i - 1 to be filled, either from the previous blit command, or from vkCmdCopyBufferToImage.
         vkCmdPipelineBarrier(commandBuffer,
             VK_PIPELINE_STAGE_TRANSFER_BIT, 
             VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -2311,7 +2312,8 @@ void HelloTriangleApplication::generateMipmaps(
         blit.srcSubresource.mipLevel = i - 1;
         blit.srcSubresource.baseArrayLayer = 0;
         blit.srcSubresource.layerCount = 1;
-        //指定mipmap目标数据（i层），仍然是VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL布局
+
+        //指定mipmap写入目标（i层），第i层仍然是VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL布局
         blit.dstOffsets[0] = { 0, 0, 0 };
         blit.dstOffsets[1] = { mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1 };
         blit.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -2325,7 +2327,40 @@ void HelloTriangleApplication::generateMipmaps(
             1, &blit,
             VK_FILTER_LINEAR);//使用与创建vkSampler相同的过滤方式
 
+        //i-1层转换为VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL布局，供着色器使用
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;//原布局是VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL（即数据源，被读取目标），所以转换之前要保证被读取完成
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        
+        //This transition waits on the current blit command to finish. 
+        vkCmdPipelineBarrier(commandBuffer,
+            //srcStageMask阶段：源阶段，必须等待完成的管线阶段，它约束的是 Barrier 之前的命令,在 Barrier 生效之前，必须等待之前提交的所有命令，执行完 srcStageMask 所指定的阶段。
+            VK_PIPELINE_STAGE_TRANSFER_BIT,
+            //dstStageMask阶段：目标阶段，必须阻塞的管线阶段，它约束的是 Barrier 之后的命令，当执行到 dstStageMask 所指定的阶段时，必须停下来等待，直到 Barrier 前面的要求被满足。
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &barrier);
+        if (mipWidth > 1) mipWidth /= 2;
+        if (mipHeight > 1) mipHeight /= 2;
     }
+
+    //最后一层mipmap布局转换
+    barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+    barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    vkCmdPipelineBarrier(commandBuffer,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+        0, nullptr,
+        0, nullptr,
+        1, &barrier);
+
+    endSingleTimeCommands(commandBuffer);
 
     this->endSingleTimeCommands(commandBuffer);
 }
