@@ -2261,10 +2261,29 @@ void HelloTriangleApplication::copyBufferToImage(
 
 void HelloTriangleApplication::generateMipmaps(
     VkImage image, 
+    VkFormat imageFormat,
     int32_t texWidth, 
     int32_t texHeight, 
     uint32_t mipLevels)
 {
+    // Check if image format supports linear blitting
+
+       /**VkFormatProperties:
+        * linearTilingFeatures线性平铺支持的用例
+        * optimalTilingFeatures：支持最佳平铺效果的使用场景。
+        * bufferFeatures缓冲区支持的用例
+        */
+    //结构体包含了显卡对某一种图像格式（imageFormat）支持的所有功能集。
+    VkFormatProperties formatProperties;
+    //vkGetPhysicalDeviceFormatProperties--询问显卡（_physicalDevice）：“对于 imageFormat 这个格式，都能对它做哪些操作
+    vkGetPhysicalDeviceFormatProperties(this->_physicalDevice, imageFormat, &formatProperties);
+    //image图片是optimalTiling内存排列方式，所以需要检查formatProperties.optimalTilingFeatures
+    //VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT-代表支持线性滤波
+    if (!(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT)) {
+        throw std::runtime_error("texture image format does not support linear blitting!");
+    }
+
+
     VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
 
     //配置内存屏障：内存屏障 (Barrier) 在 Vulkan 中有两个主要作用：同步内存访问和转换图像布局 (Image Layout)。
@@ -2489,8 +2508,7 @@ void HelloTriangleApplication::createTextureImage()
     //Vulkan 允许我们独立地转换图像的每个 mip 级别，每次 blit 操作一次只会处理两个 mip 级别，因此我们可以在两次 blit 命令之间将每个级别转换为最佳布局。
     // 这将使纹理图像的每个层级都保留在。每个层级在 blit 命令读取完成后都会由VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL过渡到VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
     //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
-    // 
-    // 
+    this->generateMipmaps(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, this->_mipLevels);
     //创建图像视图
     this->_textureImageView = this->createImageView(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, this->_mipLevels);
 }
@@ -2645,7 +2663,9 @@ VkFormat HelloTriangleApplication::findSupportedFormat(const std::vector<VkForma
         * optimalTilingFeatures：支持最佳平铺效果的使用场景。
         * bufferFeatures缓冲区支持的用例
         */
+        //结构体包含了显卡对某一种图像格式（imageFormat）支持的所有功能集。
         VkFormatProperties props;
+        //vkGetPhysicalDeviceFormatProperties--询问显卡（_physicalDevice）：“对于 imageFormat 这个格式，都能对它做哪些操作
         vkGetPhysicalDeviceFormatProperties(this->_physicalDevice, format, &props);
 
         if (tiling == VK_IMAGE_TILING_LINEAR && (props.linearTilingFeatures & features) == features) {
