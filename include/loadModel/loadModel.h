@@ -230,6 +230,7 @@ public:
         uint32_t width,
         uint32_t height,
         uint32_t mipLevels,
+        VkSampleCountFlagBits numSamples,
         VkFormat format,
         VkImageTiling tiling,
         VkImageUsageFlags usage,
@@ -263,6 +264,11 @@ public:
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
     VkFormat findDepthFormat();
     void createDepthResources();
+    //获取最大采样样本
+    VkSampleCountFlagBits getMaxUsableSampleCount();
+    //多重采样颜色缓冲区
+    void createColorResources();
+
 private:
     //抽象函数
     //创建/分配并开始记录命令缓冲区
@@ -328,6 +334,20 @@ private:
     VkImage _depthImage;//图像
     VkDeviceMemory _depthImageMemory;//内存
     VkImageView _depthImageView;//图像视图
+
+    //多重采样相关-多重采样缓冲区--需要存储每个像素所需的采样数
+    /**
+    * 如果你不开启 MSAA，片段着色器会直接把颜色画到交换链图像上，然后直接显示。
+    * 开启 MSAA 后，流程变成了：
+    * 1-片段着色器将高精度的颜色数据（带多个采样点）渲染到这个函数创建的多重采样缓冲区中。
+    * 2-Render Pass 结束前，执行一个 Resolve（解析）操作，把多重采样缓冲区的像素混合、抗锯齿化后，写入普通的交换链图像。
+    * 3-多重采样缓冲区的数据被丢弃（因为它有 Transient 标志）。
+    * 4-交换链图像被送到屏幕显示
+    */
+    VkSampleCountFlagBits _msaaSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkImage _multiSampleColorImage;
+    VkDeviceMemory _multiSampleColorImageMemory;
+    VkImageView _multiSampleColorImageView;
 
 
     /**

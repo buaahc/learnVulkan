@@ -239,6 +239,7 @@ public:
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
     VkFormat findDepthFormat();
     void createDepthResources();
+
 private:
     //抽象函数
     //创建/分配并开始记录命令缓冲区

@@ -96,6 +96,8 @@ void HelloTriangleApplication::initVulkan() {
     this->createGraphicsPipeline();
     //创建命令池，用来管理命令缓冲区
     this->createCommandPool();
+    //创建多重采样缓冲区
+    this->createColorResources();
     //创建深度缓存
     this->createDepthResources();
     //创建帧缓冲，将renderPass和vkImageView连接起来，renderPass即可绘制到vkImageView
@@ -538,6 +540,7 @@ void HelloTriangleApplication::pickPhysicalDevice() {
         if (isDeviceSuitable(device))
         {
             this->_physicalDevice = device;
+            this->_msaaSamples = this->getMaxUsableSampleCount();
             break;
         }
     }
@@ -795,6 +798,9 @@ void HelloTriangleApplication::createSwapChain() {
 //6.5-重建交换链--比如窗口大小发生变化，窗口大小发生变化后surface大小也会相应的发生变化，但是交换链大小不会变，两者尺寸大小不一致，呈现肯定出现错误，所以必须要重建交换链--
 //重建之前要先进行销毁
 void HelloTriangleApplication::cleanupSwapChain() {
+    vkDestroyImageView(this->_logicDevice, this->_multiSampleColorImageView, nullptr);
+    vkDestroyImage(this->_logicDevice, this->_multiSampleColorImage, nullptr);
+    vkFreeMemory(this->_logicDevice, this->_multiSampleColorImageMemory, nullptr);
 
     vkDestroyImageView(this->_logicDevice, this->_depthImageView, nullptr);
     vkDestroyImage(this->_logicDevice, this->_depthImage, nullptr);
@@ -834,6 +840,7 @@ void HelloTriangleApplication::reCreateSwapChain()
     //重建之前需要先进行销毁
     this->cleanupSwapChain();
     this->createSwapChain();
+    this->createColorResources();
     this->createDepthResources();
     this->createFramebuffers();
 }
@@ -1847,7 +1854,7 @@ void HelloTriangleApplication::updateUniformBuffer(uint32_t currentImage) {
     float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
     
     UniformBufferObject ubo{};
-    ubo._model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+    ubo._model = glm::rotate(glm::mat4(1.0f), /*time **/ glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 
     ubo._view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
     ubo._proj = glm::perspective(glm::radians(45.0f), this->_swapChainExtent.width / (float)this->_swapChainExtent.height, 0.1f, 10.0f);
@@ -2068,6 +2075,7 @@ void HelloTriangleApplication::createImage(
     uint32_t width, 
     uint32_t height,
     uint32_t mipLevels,
+    VkSampleCountFlagBits numSamples,
     VkFormat format, 
     VkImageTiling tiling, 
     VkImageUsageFlags usage, 
@@ -2081,14 +2089,14 @@ void HelloTriangleApplication::createImage(
     imageInfo.extent.width = width;
     imageInfo.extent.height = height;
     imageInfo.extent.depth = 1;
-    imageInfo.mipLevels = mipLevels;
-    imageInfo.arrayLayers = 1;
+    imageInfo.mipLevels = mipLevels;//mipmap层级
+    imageInfo.arrayLayers = 1;//是否是纹理数组或者3d纹理
     imageInfo.format = format;
     imageInfo.tiling = tiling;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     imageInfo.usage = usage;
-    imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    imageInfo.samples = numSamples;//每个像素的采样数
 
     if (vkCreateImage(this->_logicDevice, &imageInfo, nullptr, &image) != VK_SUCCESS) {
         throw std::runtime_error("failed to create image!");
@@ -2378,9 +2386,6 @@ void HelloTriangleApplication::generateMipmaps(
         0, nullptr,
         0, nullptr,
         1, &barrier);
-
-    endSingleTimeCommands(commandBuffer);
-
     this->endSingleTimeCommands(commandBuffer);
 }
 
@@ -2472,6 +2477,7 @@ void HelloTriangleApplication::createTextureImage()
         static_cast<uint32_t>(texWidth),
         static_cast<uint32_t>(texHeight),
         this->_mipLevels,
+        VK_SAMPLE_COUNT_1_BIT,
         VK_FORMAT_R8G8B8A8_SRGB,
         VK_IMAGE_TILING_OPTIMAL,//图像的内存排列方式
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | //图像用途-图像是传输的源：用于生成mipmap
@@ -2551,6 +2557,7 @@ void HelloTriangleApplication::createTextureSampler()
     samplerInfo.magFilter = VK_FILTER_LINEAR;
     samplerInfo.minFilter = VK_FILTER_LINEAR;
 
+
     samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
@@ -2585,9 +2592,11 @@ void HelloTriangleApplication::createTextureSampler()
 
     //mipmap相关
     samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    samplerInfo.mipLodBias = 0.0f;
-    samplerInfo.minLod = 0.0f;
-    samplerInfo.maxLod = 0.0f;
+    samplerInfo.minLod = 0; // Optional
+    samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+    samplerInfo.mipLodBias = 0.0f; // Optional
+
+
     if (vkCreateSampler(this->_logicDevice, &samplerInfo, nullptr, &this->_textureSampler) != VK_SUCCESS) {
         throw std::runtime_error("failed to create texture sampler!");
     }
@@ -2706,6 +2715,7 @@ void HelloTriangleApplication::createDepthResources()
     this->createImage(
         this->_swapChainExtent.width, 
         this->_swapChainExtent.height, 1,
+        this->_msaaSamples,
         depthFormat, 
         VK_IMAGE_TILING_OPTIMAL, 
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
@@ -2754,5 +2764,43 @@ void HelloTriangleApplication::loadModel()
 #endif // 0
         }
     }
+}
 
+//获取最大采样样本
+VkSampleCountFlagBits HelloTriangleApplication::getMaxUsableSampleCount() {
+    //查询设备的基本属性，例如名称、类型和支持的 Vulkan 版本
+    VkPhysicalDeviceProperties physicalDeviceProperties;
+    vkGetPhysicalDeviceProperties(this->_physicalDevice, &physicalDeviceProperties);
+
+    VkSampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts & physicalDeviceProperties.limits.framebufferDepthSampleCounts;
+    if (counts & VK_SAMPLE_COUNT_64_BIT) { return VK_SAMPLE_COUNT_64_BIT; }
+    if (counts & VK_SAMPLE_COUNT_32_BIT) { return VK_SAMPLE_COUNT_32_BIT; }
+    if (counts & VK_SAMPLE_COUNT_16_BIT) { return VK_SAMPLE_COUNT_16_BIT; }
+    if (counts & VK_SAMPLE_COUNT_8_BIT) { return VK_SAMPLE_COUNT_8_BIT; }
+    if (counts & VK_SAMPLE_COUNT_4_BIT) { return VK_SAMPLE_COUNT_4_BIT; }
+    if (counts & VK_SAMPLE_COUNT_2_BIT) { return VK_SAMPLE_COUNT_2_BIT; }
+
+    return VK_SAMPLE_COUNT_1_BIT;
+}
+
+//多重采样颜色缓冲区
+void HelloTriangleApplication::createColorResources()
+{
+    VkFormat colorFormat = this->_swapChainImageformat;
+    this->createImage(
+        this->_swapChainExtent.width, 
+        this->_swapChainExtent.height, 
+        1, 
+        this->_msaaSamples, 
+        colorFormat, 
+        VK_IMAGE_TILING_OPTIMAL,
+        /**
+        * VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT: 非常关键！ 这个标志告诉 Vulkan，这个图像的数据是“瞬时”的，它的生命周期只存在于一个渲染通道（Render Pass）内部。
+        * 因为在开启 MSAA 时，我们会先渲染到这个多重采样图像，然后立即“解析”到单采样的交换链图像中。
+        * 有了这个标志，GPU 会尝试将这个图像完全保存在**超高速的片上内存（Tile Memory / Cache）**中，而不会实际写入到慢速的常规显存（VRAM）中，这极大地节省了内存带宽并提升了性能。
+        */
+        VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+        this->_multiSampleColorImage, this->_multiSampleColorImageMemory);
+    this->_multiSampleColorImageView = this->createImageView(this->_multiSampleColorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
 }
