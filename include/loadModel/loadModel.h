@@ -20,11 +20,11 @@
 //队列族
 struct QueueFamilyIndices {
     //uint32_t graphicsFamily;
-    std::optional<uint32_t> _graphicsFamily;//支持图形绘制指令的队列族
+    std::optional<uint32_t> _graphicFamily;//支持图形绘制指令的队列族
     std::optional<uint32_t> _presentFamily;//支持呈现的队列族,确保设备可以在我们创建的表面上显示图像
     bool isComplete()
     {
-        return this->_graphicsFamily >= 0 && this->_presentFamily >= 0;
+        return this->_graphicFamily >= 0 && this->_presentFamily >= 0;
     }
 };
 
@@ -268,7 +268,6 @@ public:
     VkSampleCountFlagBits getMaxUsableSampleCount();
     //多重采样颜色缓冲区
     void createColorResources();
-
 private:
     //抽象函数
     //创建/分配并开始记录命令缓冲区
@@ -281,6 +280,7 @@ private:
         VkImageAspectFlags aspectFlags,
         uint32_t mipLevels);
 
+    void loadModel();
 
 
     //顶点属性
@@ -371,6 +371,4 @@ private:
     * 当调用 vkGetSwapchainImagesKHR 获取用于直接显示到屏幕上的 VkImage 时，这些 Image 是由底层的操作系统窗口管理器（如 Windows 的 DWM、Linux 的 Wayland/X11）预先创建并分配好内存的。
     * 不需要也不能为它们分配或绑定 VkDeviceMemory。
     */
-
-    void loadModel();
 };

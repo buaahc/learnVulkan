@@ -1,10 +1,10 @@
-﻿#include<vector>
+#include<vector>
 #include<map>
 #include<set>
 
 
 #define VK_USE_PLATFORM_WIN32_KHR
-#include"loadModel.h"
+#include"compute.h"
 #define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3native.h>
 #include <cstdint> // Necessary for uint32_t
@@ -12,6 +12,8 @@
 #include <algorithm> // Necessary for std::clamp
 #include <chrono>
 #include <unordered_map>
+#include <random>
+#include <ctime>
 #include "tools.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -28,6 +30,7 @@ const std::string TEXTURE_PATH = "images/viking_room.png";
 
 //定义可以同时处理2帧
 const int MAX_FRAMES_IN_FLIGHT = 2;
+const uint32_t PARTICLE_COUNT = 8192;
 
 
 //校验层
@@ -55,9 +58,8 @@ const bool enableValidationLayers = true;
 
 std::vector<VkLayerProperties> availableLayers;
 
-
-//缓冲区相关
-//缓冲区描述--对应于对哪块缓冲区的描述，步长，读取频率，对bindingDescription.binding（槽位号）的缓冲区进行描述
+#if 0
+//缓冲区描述--对应于整块缓冲区的描述，步长，读取频率，对bindingDescription.binding（槽位号）的缓冲区进行描述
 VkVertexInputBindingDescription Vertex::getBindingDescription() {
     VkVertexInputBindingDescription bindingDescription{};
     //// binding = 0，可以理解对几号缓冲区进行描述，后续在录制命令缓冲时(vkCmdBindVertexBuffers)，会绑定到 0 号槽位
@@ -82,7 +84,7 @@ VkVertexInputBindingDescription Vertex::getBindingDescription() {
 
 }
 
-//顶点属性描述--描述每个顶点内部的具体数据字段（例如：位置、颜色、法线等），以及它们如何与着色器（GLSL）中的 layout(location = x) 对应。
+//顶点属性描述--描述缓冲区中每个顶点内部的具体数据字段（例如：位置、颜色、法线等），以及它们如何与着色器（GLSL）中的 layout(location = x) 对应。
 std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescriptions() {
 
     //VkVertexInputAttributeDescription通过binding连接缓冲区，通过location连接着色器中的变量
@@ -111,6 +113,33 @@ std::array<VkVertexInputAttributeDescription, 3> Vertex::getAttributeDescription
 bool Vertex::operator==(const Vertex& other) const {
     return _pos == other._pos && _color == other._color && _texCoord == other._texCoord;
 }
+#endif // 0
+
+//缓冲区描述--对应于整块缓冲区的描述，步长，读取频率，对bindingDescription.binding（槽位号）的缓冲区进行描述
+VkVertexInputBindingDescription Particle::getBindingDescription() {
+    VkVertexInputBindingDescription bindingDescription{};
+    bindingDescription.binding = 0;
+    bindingDescription.stride = sizeof(Particle);
+    bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    return bindingDescription;
+}
+
+//顶点属性描述--描述缓冲区中每个顶点内部的具体数据字段（例如：位置、颜色、法线等），以及它们如何与着色器（GLSL）中的 layout(location = x) 对应。
+std::array<VkVertexInputAttributeDescription, 2> Particle::getAttributeDescriptions() {
+    std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions{};
+
+    attributeDescriptions[0].binding = 0;
+    attributeDescriptions[0].location = 0;
+    attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attributeDescriptions[0].offset = offsetof(Particle, _position);
+
+    attributeDescriptions[1].binding = 0;
+    attributeDescriptions[1].location = 1;
+    attributeDescriptions[1].format = VK_FORMAT_R32G32B32A32_SFLOAT;
+    attributeDescriptions[1].offset = offsetof(Particle, _color);
+
+    return attributeDescriptions;
+}
 
 void HelloTriangleApplication::run() {
     initWindow();
@@ -132,6 +161,7 @@ void HelloTriangleApplication::initWindow() {
     this->_glfwWindow = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
     glfwSetWindowUserPointer(this->_glfwWindow, this);//HelloTriangleApplication实例绑定到_glfwWindow中，类似于userData
     glfwSetFramebufferSizeCallback(this->_glfwWindow, framebufferResizeCallback);//设置窗口大小发生变化时的回调函数
+    this->_lastTime = glfwGetTime();
 }
 
 void HelloTriangleApplication::initVulkan() {
@@ -150,18 +180,27 @@ void HelloTriangleApplication::initVulkan() {
     //创建渲染通道-渲染附件-子通道-就是对应openGL的renderPass
     this->createRenderPass();
     //创建描述符-用于uniform/imageSampler等全局变量
+#if 0
     this->createDescriptorSetLayout();
+#endif
+    this->createComputeDescriptorSetLayout();
+
     //提前烘焙的vulkan状态机（类似与openGL状态机，除了少量的动态状态外，渲染过程中几乎不允许修改）
     this->createGraphicsPipeline();
-    //创建命令池，用来管理命令缓冲区
-    this->createCommandPool();
+    //计算着色器管线
+    this->createComputePipeline();
+#if 0
     //创建多重采样缓冲区
     this->createColorResources();
     //创建深度缓存
     this->createDepthResources();
+#endif // 0
     //创建帧缓冲，将renderPass和vkImageView连接起来，renderPass即可绘制到vkImageView
     this->createFramebuffers();
-    //创建纹理图像及图像视图
+    //创建命令池，用来管理命令缓冲区
+    this->createCommandPool();
+#if 0
+    //创建纹理图像/图像视图
     this->createTextureImage();
     //创建纹理采样器
     this->createTextureSampler();
@@ -171,14 +210,20 @@ void HelloTriangleApplication::initVulkan() {
     this->createVertexBuffer();
     //创建索引缓冲区
     this->createIndexBuffer();
+#endif // 0
     //创建uniformbuffer
     this->createUniformBuffers();
+    this->createShaderStorageBuffers();
     //创建描述符池，包含描述符相关的所有总的资源
     this->createDescriptorPool();
     //创建描述符集
+#if 0
     this->createDescriptorSets();
+#endif // 0
+    this->createComputeDescriptorSets();
     //分配命令缓冲区-从命令池中分配一块给命令缓冲区
     this->createCommandBuffers();
+    this->createComputeCommandBuffers();
     //创建同步对象-信号量/栅栏-信号里：gpu同步，栅栏：cpu等待gpu同步
     this->createSyncObjects();
 }
@@ -188,6 +233,10 @@ void HelloTriangleApplication::mainLoop() {
         //处理事件输入
         glfwPollEvents();
         this->drawFrame();
+
+        double currentTime = glfwGetTime();
+        this->_lastFrameTime = (currentTime - this->_lastTime) * 1000.0;
+        this->_lastTime = currentTime;
     }
     //cpu阻塞，确保GPU全部指令执行完毕，处于闲置（idle）状态，cpu才继续运行，执行程序退出
     vkDeviceWaitIdle(this->_logicDevice);
@@ -195,31 +244,53 @@ void HelloTriangleApplication::mainLoop() {
 
 void HelloTriangleApplication::cleanup() {
     this->cleanupSwapChain();
+
+#if 0
     vkDestroySampler(this->_logicDevice, this->_textureSampler, nullptr);
     vkDestroyImageView(this->_logicDevice, this->_textureImageView, nullptr);
     vkDestroyImage(this->_logicDevice, this->_textureImage, nullptr);
     vkFreeMemory(this->_logicDevice, this->_textureImageMemory, nullptr);
+#endif // 0
+
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(this->_logicDevice, this->_uniformBuffers[i], nullptr);
         vkFreeMemory(this->_logicDevice, this->_uniformBuffersMemory[i], nullptr);
     }
+
+#if 0
     vkDestroyDescriptorSetLayout(this->_logicDevice, this->_descriptorSetLayout, nullptr);
+
     vkDestroyBuffer(this->_logicDevice, this->_indexBuffer, nullptr);
     vkFreeMemory(this->_logicDevice, this->_indexBufferMemory, nullptr);
 
     vkDestroyBuffer(this->_logicDevice, this->_vertexBuffer, nullptr);
     vkFreeMemory(this->_logicDevice, this->_vertexBufferMemory, nullptr);
-    //for (auto framebuffer : this->_swapChainFramebuffers) {
-      //  vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
-    //}
+#endif // 0
+
+
+    vkDestroyDescriptorSetLayout(this->_logicDevice, this->_computeDescriptorSetLayout, nullptr);
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
+    {
+        vkDestroyBuffer(this->_logicDevice, this->_shaderStorageBuffers[i], nullptr);
+        vkFreeMemory(this->_logicDevice, this->_shaderStorageBuffersMemory[i], nullptr);
+    }
+
 
     vkDestroyPipeline(this->_logicDevice, this->_graphicsPipeline, nullptr);
     vkDestroyPipelineLayout(this->_logicDevice, this->_pipelineLayout, nullptr);
+
+    vkDestroyPipeline(this->_logicDevice, this->_computePipeline, nullptr);
+    vkDestroyPipelineLayout(this->_logicDevice, this->_computePipelineLayout, nullptr);
+
     vkDestroyRenderPass(this->_logicDevice, this->_renderPass, nullptr);
+
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroySemaphore(this->_logicDevice, this->_imageAvailableSemaphores[i], nullptr);
         vkDestroySemaphore(this->_logicDevice, this->_renderFinishedSemaphores[i], nullptr);
-        vkDestroyFence(this->_logicDevice, this->_inFlightFences[i], nullptr);
+        vkDestroySemaphore(this->_logicDevice, this->_computeFinishedSemaphores[i], nullptr);
+        vkDestroyFence(this->_logicDevice, this->_inFlightFences[i], nullptr);       
+        vkDestroyFence(this->_logicDevice, this->_computeInFlightFences[i], nullptr);
     }
     //销毁图像视图
    // for (auto imageView : this->_swapChainImageViews) {
@@ -444,6 +515,7 @@ void HelloTriangleApplication::setupDebugMessenger() {
 //要想把Vulkan画好的图显示到你看得见的窗口上，就必须创建一个 VkSurfaceKHR（窗口表面）
 void HelloTriangleApplication::createSurface()
 {
+    //原先注释
 #if 0//windows系统专属的窗口表面创建方式
     VkWin32SurfaceCreateInfoKHR createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
@@ -474,10 +546,11 @@ QueueFamilyIndices HelloTriangleApplication::findQueueFamilies(VkPhysicalDevice 
     int i = 0;
     for (const auto& queueFamily : queueFamilies)
     {
-        //1-查找图形绘制队列族-其实就是一个uint32_t类型索引index--找到支持VK_QUEUE_GRAPHICS_BIT绘制指令的队列族
-        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)//同时支持图形和计算的队列族
+        //1-查找图形绘制队列族-其实就是一个uint32_t类型索引index--找到支持VK_QUEUE_GRAPHICS_BIT/VK_QUEUE_COMPUTE_BIT绘制指令的队列族
+        if ((queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT)&&
+            (queueFamily.queueFlags & VK_QUEUE_COMPUTE_BIT))//同时支持图形和计算的队列族
         {
-            this->_physicalQueueFamilyIndices._graphicFamily = i;
+            this->_physicalQueueFamilyIndices._graphicsAndComputeFamily = i;
         }
 
         //2-查找呈现队列族,查找支持将图像输出到我们创建的窗口表面_vkSurface上的队列族
@@ -553,7 +626,7 @@ SwapChainSupportDetails HelloTriangleApplication::querySwapChainSupport(VkPhysic
 
 //4.4-选择合适的显卡--绘制和呈现的队列族，支持将图像输出到创建的窗口表面_vkSurface，支持交换链扩展，查询显卡的相关能力需支持交换链的需求
 bool HelloTriangleApplication::isDeviceSuitable(VkPhysicalDevice device) {
-#if 0
+#if 0//原先注释
     //查询设备的基本属性，例如名称、类型和支持的 Vulkan 版本
     vkGetPhysicalDeviceProperties(device, &this->_physicalDeviceProperties);
     //查询对纹理压缩、64 位浮点数和多视口渲染（对 VR 很有用）等可选功能的支持情况
@@ -599,12 +672,14 @@ void HelloTriangleApplication::pickPhysicalDevice() {
         if (isDeviceSuitable(device))
         {
             this->_physicalDevice = device;
+#if 0
             this->_msaaSamples = this->getMaxUsableSampleCount();
+#endif // 0
             break;
         }
     }
     //对显卡按照支持的特性数量进行排序
-#if 0
+#if 0//原先注释
     // Use an ordered map to automatically sort candidates by increasing score
     std::multimap<int, VkPhysicalDevice> candidates;
 
@@ -656,8 +731,8 @@ void HelloTriangleApplication::createLogicDevice()
     //float queuePriority = 1.0f;
     //this->_queueCreateInfo.pQueuePriorities = &queuePriority;
 
-    //1-指定要创建的逻辑队列（绘制/呈现），可以理解为传送带，物理队列族（绘制/呈现）关联到逻辑设备信息，std::set自动去重，如果_graphicFamily和_presentFamily相同，std::set将保证只使用一个；
-    std::set<uint32_t> uniqueQueueFamilies = { this->_physicalQueueFamilyIndices._graphicFamily.value(), this->_physicalQueueFamilyIndices._presentFamily.value() };
+    //1-指定要创建的逻辑队列（绘制/呈现），可以理解为传送带，物理队列族（绘制/呈现）关联到逻辑设备信息，std::set自动去重，如果_graphicsAndComputeFamily和_presentFamily相同，std::set将保证只使用一个；
+    std::set<uint32_t> uniqueQueueFamilies = { this->_physicalQueueFamilyIndices._graphicsAndComputeFamily.value(), this->_physicalQueueFamilyIndices._presentFamily.value() };
     float queuePriority = 1.0f;
     for (uint32_t physicalQueueFamily : uniqueQueueFamilies) {
         //为每个索引创建一个 VkDeviceQueueCreateInfo 并存入 _logicDeviceQueueCreateInfos 向量中
@@ -701,7 +776,8 @@ void HelloTriangleApplication::createLogicDevice()
         throw std::runtime_error("failed to create logical device!");
     }
     //6-从逻辑设备上得到图形队列族的句柄，拿到向显卡发送命令的通道，有了逻辑设备和队列句柄，我们现在就可以真正开始使用显卡来执行任务了
-    vkGetDeviceQueue(this->_logicDevice, this->_physicalQueueFamilyIndices._graphicFamily.value(), 0, &this->_graphicsDrawQueue);
+    vkGetDeviceQueue(this->_logicDevice, this->_physicalQueueFamilyIndices._graphicsAndComputeFamily.value(), 0, &this->_graphicsDrawQueue);
+    vkGetDeviceQueue(this->_logicDevice, this->_physicalQueueFamilyIndices._graphicsAndComputeFamily.value(), 0, &this->_computeQueue);
     vkGetDeviceQueue(this->_logicDevice, this->_physicalQueueFamilyIndices._presentFamily.value(), 0, &this->_presentQueue);
 }
 
@@ -798,10 +874,10 @@ void HelloTriangleApplication::createSwapChain() {
     swapchainCreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;//图像用途，把这些图像当作颜色附件，也就是直接往上面画图（渲染输出）
 
 
-    uint32_t queueFamilyIndices[] = { this->_physicalQueueFamilyIndices._graphicFamily.value(), this->_physicalQueueFamilyIndices._presentFamily.value() };
+    uint32_t queueFamilyIndices[] = { this->_physicalQueueFamilyIndices._graphicsAndComputeFamily.value(), this->_physicalQueueFamilyIndices._presentFamily.value() };
 
     //存在多个队列族时，如何处理交换链图形，队列族中的图形队列族与呈现队列族不同，将从图形队列绘制交换链中的图像，然后将其提交到表示队列
-    if (this->_physicalQueueFamilyIndices._graphicFamily != this->_physicalQueueFamilyIndices._presentFamily) {
+    if (this->_physicalQueueFamilyIndices._graphicsAndComputeFamily != this->_physicalQueueFamilyIndices._presentFamily) {
         //图形队列族和显示队列族索引不同,使用并发模式
         swapchainCreateInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
         swapchainCreateInfo.queueFamilyIndexCount = 2;
@@ -858,6 +934,7 @@ void HelloTriangleApplication::createSwapChain() {
 //6.5-重建交换链--比如窗口大小发生变化，窗口大小发生变化后surface大小也会相应的发生变化，但是交换链大小不会变，两者尺寸大小不一致，呈现肯定出现错误，所以必须要重建交换链--
 //重建之前要先进行销毁
 void HelloTriangleApplication::cleanupSwapChain() {
+#if 0
     vkDestroyImageView(this->_logicDevice, this->_multiSampleColorImageView, nullptr);
     vkDestroyImage(this->_logicDevice, this->_multiSampleColorImage, nullptr);
     vkFreeMemory(this->_logicDevice, this->_multiSampleColorImageMemory, nullptr);
@@ -865,6 +942,7 @@ void HelloTriangleApplication::cleanupSwapChain() {
     vkDestroyImageView(this->_logicDevice, this->_depthImageView, nullptr);
     vkDestroyImage(this->_logicDevice, this->_depthImage, nullptr);
     vkFreeMemory(this->_logicDevice, this->_depthImageMemory, nullptr);
+#endif // 0
 
     for (auto framebuffer : this->_swapChainFramebuffers) {
         vkDestroyFramebuffer(this->_logicDevice, framebuffer, nullptr);
@@ -900,8 +978,10 @@ void HelloTriangleApplication::reCreateSwapChain()
     //重建之前需要先进行销毁
     this->cleanupSwapChain();
     this->createSwapChain();
+#if 0
     this->createColorResources();
     this->createDepthResources();
+#endif // 0
     this->createFramebuffers();
 }
 
@@ -930,11 +1010,11 @@ void HelloTriangleApplication::createRenderPass()
     //设置当前renderPass需要的帧缓冲附件，此处并没有真正的创建帧缓冲，只是标识出renderPass需要哪些帧缓冲附件，
     //后面的vkframeBuffer才是真正的创建对应于当前renderPass的帧缓冲
     
-    //1-列出帧缓冲附件（Attachment），通常指的就是帧缓冲中的图像（如颜色缓冲、深度缓冲）
+    //1-列出帧缓冲附件（Attachment），帧缓冲对应的显存（如颜色缓冲、深度缓冲）
     //---------------------------------------------------多重采样颜色缓冲区附件--------------------------------------------------------------------
     VkAttachmentDescription colorAttachment{};
     colorAttachment.format = this->_swapChainImageformat; // 必须与交换链图像格式一致
-    colorAttachment.samples = this->_msaaSamples;// 不使用多重采样 (MSAA)
+    colorAttachment.samples = this->_msaaSamples;// 使用多重采样 (MSAA)
 
     //loadOp/storeOp: 控制数据的读写。CLEAR 确保每一帧开始都是干净的，STORE 确保我们画的东西被保留下来。
     //颜色/深度缓冲区
@@ -960,10 +1040,12 @@ void HelloTriangleApplication::createRenderPass()
     * 只有当图像要通过“交换链(Swapchain)”交给显示器显示时，才使用这个布局，当渲染通道结束时，Vulkan 会自动将图像从渲染时的状态转换到这个布局，以便显示引擎读取。
     */
     colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // 渲染开始前布局：不关心图像在内存中的布局
-    //colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;// 渲染结束后布局：转换为适合交换链呈现的格式//交换链中要展示的图像
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;// 渲染结束后布局：转换为适合交换链呈现的格式//交换链中要展示的图像
+#if 0//多重采样缓冲区
     colorAttachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;// 渲染结束后布局：保持帧缓冲颜色附件布局，，That's because multisampled images cannot be presented directly
+#endif // 0
 
-    
+#if 0
     //---------------------------------------------------深度缓冲区附件--------------------------------------------------------------------
     VkAttachmentDescription depthAttachment{};
     depthAttachment.format = findDepthFormat();
@@ -989,6 +1071,7 @@ void HelloTriangleApplication::createRenderPass()
     colorAttachmentResolve.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     colorAttachmentResolve.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     colorAttachmentResolve.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+#endif // 0
 
 
     //2-定义附件引用--每个附件都需要定义一个附件引用
@@ -997,6 +1080,7 @@ void HelloTriangleApplication::createRenderPass()
     colorAttachmentRef.attachment = 0;//使用索引为0的附件，即上面定义的VkAttachmentDescription colorAttachment
     colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;//渲染过程中：引用的附件用作何种布局--这是一种为了“作为颜色缓冲区被写入”而极度优化的布局。
 
+#if 0
     //---------------------------------------------------深度缓冲区附件引用--------------------------------------------------------------------
     VkAttachmentReference depthAttachmentRef{};
     depthAttachmentRef.attachment = 1;
@@ -1005,6 +1089,7 @@ void HelloTriangleApplication::createRenderPass()
     VkAttachmentReference colorAttachmentResolveRef{};
     colorAttachmentResolveRef.attachment = 2;
     colorAttachmentResolveRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+#endif // 0
 
 
     //3-子通道：渲染通道renderPass代码执行之处,是渲染命令真正执行的地方
@@ -1018,14 +1103,22 @@ void HelloTriangleApplication::createRenderPass()
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
     subpass.colorAttachmentCount = 1;
     //输出附件
-    subpass.pColorAttachments = &colorAttachmentRef;//子通道引用附件，索引为0，对应layout(location = 0)
-    subpass.pDepthStencilAttachment = &depthAttachmentRef;//子通道深度附件
-    subpass.pResolveAttachments = &colorAttachmentResolveRef;
+    subpass.pColorAttachments = &colorAttachmentRef;//多重采样缓冲区（样本数 = _msaaSamples）,GPU真正画图的地方
+
+#if 0
+    subpass.pDepthStencilAttachment = &depthAttachmentRef;//深度缓冲区（样本数 = _msaaSamples）
+    /**
+    * 当你把 colorAttachmentResolveRef 赋值给 pResolveAttachments 时，就在给 GPU 下达一个底层指令：当这个子通道（Subpass）画完之后，
+    * 请自动把 pColorAttachments（附件0，MSAA 高精度画面）里的多个采样点进行混合（抗锯齿处理），然后把最终结果**直接导出（Resolve）*到 pResolveAttachments（附件2，普通交换链图像）中！
+    */
+    subpass.pResolveAttachments = &colorAttachmentResolveRef;//用来显示的普通交换链图像（样本数 = VK_SAMPLE_COUNT_1_BIT）--这是 Vulkan 自动实现降采样（Resolve）的根本原因；
+#endif // 0
+
 
     /**
     * GPU 渲染像流水线（Pipeline）一样分为很多阶段（读取顶点 -> 顶点着色器 -> ... -> 颜色输出），
     * 因为GPU是并行工作的，如果不显式告诉它顺序，它可能会在上一帧图像还没显示完时，就开始往这张图里写新的数据，导致画面撕裂或崩溃。
-    *
+    * 
     * 子通道依赖项--控制“谁先做完，谁才能开始”，负责处理管线内部阶段的读写同步；
     * 子通道依赖并不能等到呈现引擎读取完毕，只能控制 vulkanPipline 内部的同步，vulkanPipline 使用信号量来等待呈现引擎读取完毕，呈现引擎不属于 vulkanPipline
     */
@@ -1042,28 +1135,27 @@ void HelloTriangleApplication::createRenderPass()
 
     //dstStageMask：表示消费者运行到dstStageMask阶段，必须等待
     //VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT：运行到输出颜色阶段必须等待；
-    //VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT（早期片段测试）：运行到提前深度测试阶段必须等待；
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
     //srcStageMask：等待生产者完成srcStageMask阶段
     //VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT：等待上一帧（生产者）输出颜色完成；
-    //VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT（晚期片段测试）：等待上一帧（生产者）深度写入完成完成；
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
     //控制内存的访问权限（Access/ 缓存刷新机制）
     //srcAccessMask ：要求 srcSubpass 上一帧（生产者）在解除阻塞之前，必须完成颜色和深度的“写入（WRITE）”操作彻底刷入物理显存（Make Available）
-    dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
-    //dstAccessMask ：表示依赖者 dstSubpass 在前置条件满足、解除阻塞开始运行时，明确告诉 GPU，我们的子通道接下来的操作是 写入 (WRITE) 颜色附件/深度附件，请确保我能看到刚才刷入显存的最新数据。
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    //dstAccessMask ：表示依赖者 dstSubpass 在前置条件满足、解除阻塞开始运行时，明确告诉 GPU，我们的子通道接下来的操作是 写入 (WRITE) 颜色附件，请确保我能看到刚才刷入显存的最新数据。
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
     //子通道依赖为什么没有设置等待呈现引擎读取扫描完毕呢？因为那是信号量的职责范围，子通道依赖无需设置；
+
 
 
     //5-创建渲染通道
     //附件和引用它的子通道都已描述完毕，开始创建渲染通道
 
-    std::array<VkAttachmentDescription, 3> attachments = { colorAttachment, depthAttachment ,colorAttachmentResolve };
+    std::array<VkAttachmentDescription, 1> attachments = { colorAttachment };
 
     VkRenderPassCreateInfo renderPassInfo{};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -1072,7 +1164,6 @@ void HelloTriangleApplication::createRenderPass()
     renderPassInfo.pAttachments = attachments.data();//附件数组--对应上面定义的附件，由于只有一个附件，直接赋值指针即可
     renderPassInfo.subpassCount = 1;
     renderPassInfo.pSubpasses = &subpass;
-
     renderPassInfo.dependencyCount = 1;
     renderPassInfo.pDependencies = &dependency;
 
@@ -1120,13 +1211,13 @@ VkShaderModule HelloTriangleApplication::createShaderModule(const std::vector<ch
 * 1个Subpass可以包含N个vkPipeline（用于画不同的材质、物体）;
 * 1个Pipeline只能严格属于1个特定的Subpass，它绝不能跨界;
 */
-void HelloTriangleApplication::createGraphicsPipeline() {
-    
+void HelloTriangleApplication::createGraphicsPipeline()
+{ 
     //1-配置着色器
     std::string exeDir = getExeDirectory();
     std::cout << "EXE 所在目录: " << exeDir << std::endl;
-    auto vertShaderCode = readFile(exeDir + "/resources/shaders/vert.spv");
-    auto fragShaderCode = readFile(exeDir + "/resources/shaders/frag.spv");
+    auto vertShaderCode = readFile(exeDir + "/resources/shaders/computevert.spv");
+    auto fragShaderCode = readFile(exeDir + "/resources/shaders/computefrag.spv");
 
     //读取着色器字节码信息
     VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
@@ -1150,23 +1241,19 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
     //2-配置固定管线功能
-    //顶点输入--描述了将传递给顶点着色器的顶点数据的格式
-    /*
-    * 绑定：数据之间的间距以及数据是按顶点还是按实例（参见实例化）
-      属性描述：传递给顶点着色器的属性类型、加载它们的绑定以及偏移量。
-    */
+
+    //顶点缓冲区描述绑定到管线上
     VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
     vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    //把包含顶点数据的内存块（VkBuffer）绑定到管线上，
-    //一个 Binding 描述了整个数据块的总体特征：比如相邻两个顶点之间的字节间距（Stride 是多少），
-    //以及数据是逐个顶点提取，还是逐个实例（Instance）提取。这里为 0 说明我们没有绑定任何外部缓冲区。
-    auto bindingDescription = Vertex::getBindingDescription();
-
+    //把顶点数据内存块（VkBuffer）的描述绑定到管线上，一个 Binding 描述了整个数据块的总体特征：比如相邻两个顶点之间的字节间距（Stride 是多少），以及数据是逐个顶点提取，还是逐个实例（Instance）提取
+    auto bindingDescription = Particle::getBindingDescription();
     vertexInputInfo.vertexBindingDescriptionCount = 1;//绑定的数据
     vertexInputInfo.pVertexBindingDescriptions = &bindingDescription; // Optional
-    // Attribute（属性）？：一个顶点通常包含多种信息，比如位置（x,y,z）、颜色（r,g,b）、纹理坐标（u,v）等。
+
+    //属性描述绑定到管线上
+    // Attribute（属性）：一个顶点通常包含多种信息，比如位置（x,y,z）、颜色（r,g,b）、纹理坐标（u,v）等。
     // 这些具体的细节就是属性。属性描述用来告诉 GPU：“位置信息在这个数据块的第 0 个字节，类型是 vec3；颜色信息在第 12 个字节，类型也是 vec3”。
-    auto attributeDescriptions = Vertex::getAttributeDescriptions();
+    auto attributeDescriptions = Particle::getAttributeDescriptions();
     vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());//数据的属性
     vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data(); // Optional
 
@@ -1174,7 +1261,9 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     //绘制的图元类型-即glDrawArray/glDrawElement函数中的第一个参数，绘制指令vkDrawCmd/vkCmdDrawIndexed并不指定图元类型
     VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
     inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    //inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    //指定绘制图元-POINT
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
     inputAssembly.primitiveRestartEnable = VK_FALSE;
 
     //视口与裁切--为什么没有定义具体的宽高？ 因为代码后面使用了动态状态（Dynamic State），具体的宽高可以在绘制命令录制时动态指定。
@@ -1203,6 +1292,7 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     multisampling.rasterizationSamples = this->_msaaSamples;
 
 
+#if 0
     //启用深度测试
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -1217,15 +1307,28 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     depthStencil.stencilTestEnable = VK_FALSE;
     depthStencil.front = {}; // Optional
     depthStencil.back = {}; // Optional
+#endif // 0
 
 
 
 
-    //颜色混合-针对渲染子通道中的帧缓冲附件，如果子通道有多个（N个）附件（MRT），那此处就需要创建多个（N个）对应的VkPipelineColorBlendAttachmentState，以便对每个输出附件进行混合设置
+    //颜色混合-针对渲染子通道中的帧缓冲附件，设置其是否透明
+    /**
+    * glEnable(GL_BLEND);
+    * glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    * glBlendEquation(GL_FUNC_ADD);
+    */
+    //如果子通道有多个附件（MRT），那此处就需要创建多个对应的VkPipelineColorBlendAttachmentState，以便对每个输出附件进行混合设置
+    //td::array<VkPipelineColorBlendAttachmentState, 3> blendAttachments{};//顺序与MRT顺序要完全一致
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-    //glColorMask
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-    colorBlendAttachment.blendEnable = VK_FALSE;
+    colorBlendAttachment.blendEnable = VK_TRUE;
+    colorBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    colorBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+    colorBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    colorBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
 
     VkPipelineColorBlendStateCreateInfo colorBlending{};
     colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -1254,19 +1357,20 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     dynamicState.pDynamicStates = dynamicStates.data();
 
 
-    //管道布局-全局变量使用-uniform使用
+    //管道布局-全局变量使用-uniform使用，可以理解为描述符布局_descriptorSetLayout
     /**
     * 管线布局用于告诉 GPU，着色器将会使用哪些全局变量（如 Uniform Buffers，通常用来传递 MVP 变换矩阵；或者 Push Constants，用于传递少量的高频更新数据）。
-    * 目前是空布局（Count=0），因为最简单的三角形还不需要传递这些参数。但即使为空，Vulkan 也要求必须创建一个 VkPipelineLayout 对象。
     */
+
+    //ubo/imageSamplers等全局变量描述符绑定到管线
+    //重点：描述符图纸绑定给管线，管线就知道ubo/texture长什么样了，(这对应了 GLSL 着色器里的 layout(binding = 0) uniform UBO { ... } 和 layout(binding = 1) uniform sampler2D texSampler;)
     VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipelineLayoutInfo.setLayoutCount = 1;
-    //ubo/imageSamplers等全局变量描述符绑定到管线
-    ////重点：描述符图纸绑定给管线，管线就知道ubo/texture长什么样了，(这对应了 GLSL 着色器里的 layout(binding = 0) uniform UBO { ... } 和 layout(binding = 1) uniform sampler2D texSampler;)
-    pipelineLayoutInfo.pSetLayouts = &this->_descriptorSetLayout;
-    pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
-    pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
+    //当前管线无需descriptorSetLayout
+    pipelineLayoutInfo.setLayoutCount = 0;
+    pipelineLayoutInfo.pSetLayouts = nullptr;
+    //pipelineLayoutInfo.setLayoutCount = 1;
+    //pipelineLayoutInfo.pSetLayouts = &this->_descriptorSetLayout;
 
     if (vkCreatePipelineLayout(this->_logicDevice, &pipelineLayoutInfo, nullptr, &this->_pipelineLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create pipeline layout!");
@@ -1285,7 +1389,9 @@ void HelloTriangleApplication::createGraphicsPipeline() {
     pipelineInfo.pRasterizationState = &rasterizer;
     pipelineInfo.pMultisampleState = &multisampling;
     //pipelineInfo.pDepthStencilState = nullptr; // Optional
+#if 0
     pipelineInfo.pDepthStencilState = &depthStencil;
+#endif // 0
     pipelineInfo.pColorBlendState = &colorBlending;
     pipelineInfo.pDynamicState = &dynamicState;
     //引用管道布局
@@ -1315,6 +1421,75 @@ void HelloTriangleApplication::createGraphicsPipeline() {
 
     vkDestroyShaderModule(this->_logicDevice, fragShaderModule, nullptr);
     vkDestroyShaderModule(this->_logicDevice, vertShaderModule, nullptr);
+}
+
+void HelloTriangleApplication::createComputePipeline()
+{
+    //配置着色器
+    std::string exeDir = getExeDirectory();
+    std::cout << "EXE 所在目录: " << exeDir << std::endl;
+    auto computeShaderCode = readFile(exeDir + "/resources/shaders/Comp.spv");
+
+    VkShaderModule computeShaderModule = createShaderModule(computeShaderCode);
+
+
+    VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
+    computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    computeShaderStageInfo.module = computeShaderModule;
+    computeShaderStageInfo.pName = "main";
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    //重点：描述符图纸绑定给管线，管线就知道ubo/texture/ssbo长什么样了，(这对应了 GLSL 着色器里的 layout(binding = 0) uniform UBO { ... } 和 layout(binding = 1) uniform sampler2D texSampler;)
+    pipelineLayoutInfo.pSetLayouts = &this->_computeDescriptorSetLayout;
+
+    if (vkCreatePipelineLayout(this->_logicDevice, &pipelineLayoutInfo, nullptr, &this->_computePipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create compute pipeline layout!");
+    }
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.layout = this->_computePipelineLayout;
+    pipelineInfo.stage = computeShaderStageInfo;
+
+    if (vkCreateComputePipelines(this->_logicDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &this->_computePipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create compute pipeline!");
+    }
+
+    vkDestroyShaderModule(this->_logicDevice, computeShaderModule, nullptr);
+
+    ///////
+
+#if 0
+    VkPipelineShaderStageCreateInfo computeShaderStageInfo{};
+    computeShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    computeShaderStageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    computeShaderStageInfo.module = computeShaderModule;
+    computeShaderStageInfo.pName = "main";
+
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo{};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutInfo.setLayoutCount = 1;
+    //重点：描述符图纸绑定给管线，管线就知道ubo/texture/ssbo长什么样了，(这对应了 GLSL 着色器里的 layout(binding = 0) uniform UBO { ... } 和 layout(binding = 1) uniform sampler2D texSampler;)
+    pipelineLayoutInfo.pSetLayouts = &this->_computeDescriptorSetLayout;
+
+    if (vkCreatePipelineLayout(this->_logicDevice, &pipelineLayoutInfo, nullptr, &this->_computePipelineLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create compute pipeline layout!");
+    }
+
+    VkComputePipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineInfo.layout = this->_computePipelineLayout;
+    pipelineInfo.stage = computeShaderStageInfo;
+
+    if (vkCreateComputePipelines(this->_logicDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &this->_computePipeline) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create compute pipeline!");
+    }
+
+    vkDestroyShaderModule(this->_logicDevice, computeShaderModule, nullptr);
+#endif // 0
 }
 
 //关键步骤十：创建帧缓冲区VkFramebuffer，VkFramebuffer不创建任何显存
@@ -1354,11 +1529,11 @@ void HelloTriangleApplication::createFramebuffers()
         * 那么传入的 VkImageView 底层图像的采样数也必须是 1。如果你传入了一个 4 倍抗锯齿的图像，校验层会直接报错，
         * 目前直接使用交换链_swapChainImage，所有用于直接输出到屏幕的交换链图像，其采样率必须、也只能是 1 倍（VK_SAMPLE_COUNT_1_BIT），所以与RenderPass里要求的samples对应起来
         */
-        std::array<VkImageView, 3> attachments = { this->_multiSampleColorImageView,this->_depthImageView , this->_swapChainImageViews[i] };
+        std::array<VkImageView, 1> attachments = { this->_swapChainImageViews[i] };
         VkFramebufferCreateInfo framebufferInfo{};
         framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         //链接renderPass
-        framebufferInfo.renderPass = this->_renderPass;///frameBuffer绑定的renderPass
+        framebufferInfo.renderPass = this->_renderPass;//frameBuffer绑定的renderPass
         framebufferInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
 
         //链接vkImageView（真实显存）
@@ -1392,10 +1567,10 @@ void HelloTriangleApplication::createCommandPool()
     poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;//允许单独重新记录命令缓冲区，如果没有此标志，则所有缓冲区必须一起重置
     /**
     * 命令缓冲区通过提交到设备队列来执行，不同的队列执行的任务不同（有的处理图形，有的处理计算，有的处理内存传输）。
-    * 限制：一个命令池只能为特定的一种队列族创建命令缓冲区。
+    * 限制：一个命令池只能为特定的一种队列族创建命令缓冲区，_graphicsAndComputeFamily 这个队列族即可以绘制图形又可以用于计算着色器。
     * 这里使用了 _graphicsFamily（图形队列族），说明从这个池里创建出来的命令，将来是发给 GPU 用来画图的。
     */
-    poolInfo.queueFamilyIndex = this->_physicalQueueFamilyIndices._graphicFamily.value();
+    poolInfo.queueFamilyIndex = this->_physicalQueueFamilyIndices._graphicsAndComputeFamily.value();
     //创建命令池
     if (vkCreateCommandPool(this->_logicDevice, &poolInfo, nullptr, &this->_commandPool) != VK_SUCCESS) {
         throw std::runtime_error("failed to create command pool!");
@@ -1492,49 +1667,15 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
 
-    VkBuffer vertexBuffers[] = { this->_vertexBuffer };
+    VkBuffer vertexBuffers[] = { this->_shaderStorageBuffers[this->_currentFrame] };
     VkDeviceSize offsets[] = { 0 };
     uint32_t firstBinding = 0;
     uint32_t bindingCount = 1;
-    //vertexBuffers缓冲区插进0号“槽位”
+    //vertexBuffers缓冲区插进0号“槽位”，即将vertexBuffers与binding=0的缓冲区描述连接起来
     vkCmdBindVertexBuffers(commandBuffer, firstBinding, bindingCount, vertexBuffers, offsets);
 
-    VkDeviceSize offset = 0;
-    vkCmdBindIndexBuffer(commandBuffer, this->_indexBuffer, offset, VK_INDEX_TYPE_UINT32);
+    vkCmdDraw(commandBuffer, PARTICLE_COUNT, 1, 0, 0);
 
-    //绑定描述符集，VK_PIPELINE_BIND_POINT_GRAPHICS将描述符集绑定到图形管线
-    /*
-    * VkCommandBuffer                             commandBuffer,
-    * VkPipelineBindPoint                         pipelineBindPoint,
-    * VkPipelineLayout                            layout,
-    * uint32_t                                    firstSet,//第一个描述符集的索引
-    * uint32_t                                    descriptorSetCount,//要绑定的描述符集数量
-    * const VkDescriptorSet*                      pDescriptorSets,//要绑定的描述符集
-    * uint32_t                                    dynamicOffsetCount,//动态描述符的偏移量数组
-    * const uint32_t*                             pDynamicOffsets
-    */
-    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, this->_pipelineLayout, 0, 1, 
-        &this->_descriptorSets[this->_currentFrame],//绑定的描述符集，ubo和textureSampler数据
-        0, nullptr);
-    //发出绘制指令，真正执行“画”的动作
-    /**
-    * VkCommandBuffer                             commandBuffer,
-    * uint32_t                                    vertexCount,
-    * uint32_t                                    instanceCount,
-    * uint32_t                                    firstVertex,
-    * uint32_t                                    firstInstance
-    */
-    //vkCmdDraw(commandBuffer, this->_vertices.size(), 1, 0, 0);
-    /**
-    * VkCommandBuffer                             commandBuffer,
-    * uint32_t                                    indexCount,
-    * uint32_t                                    instanceCount,
-    * uint32_t                                    firstIndex,
-    * int32_t                                     vertexOffset,
-    * uint32_t                                    firstInstance
-    */
-
-    vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(this->_indices.size()), 1, 0, 0, 0);
 
     //渲染过程结束
     vkCmdEndRenderPass(commandBuffer);
@@ -1544,12 +1685,47 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
     }
 }
 
+void HelloTriangleApplication::createComputeCommandBuffers()
+{
+    this->_computeCommandBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = this->_commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = (uint32_t)this->_computeCommandBuffers.size();
+
+    if (vkAllocateCommandBuffers(this->_logicDevice, &allocInfo, this->_computeCommandBuffers.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate compute command buffers!");
+    }
+}
+
+void HelloTriangleApplication::recordComputeCommandBuffer(VkCommandBuffer commandBuffer)
+{
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+        throw std::runtime_error("failed to begin recording compute command buffer!");
+    }
+
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, this->_computePipeline);
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, this->_computePipelineLayout, 0, 1, &this->_computeDescriptorSets[this->_currentFrame], 0, nullptr);
+    vkCmdDispatch(commandBuffer, PARTICLE_COUNT / 256, 1, 1);
+
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+        throw std::runtime_error("failed to record compute command buffer!");
+    }
+}
+
 //关键步骤十四：创建同步对象-信号量/栅栏，信号量用于GPU同步，栅栏用于CPU同步
 void HelloTriangleApplication::createSyncObjects() {
 
     this->_imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
     this->_renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    this->_computeFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
+    
     this->_inFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
+    this->_computeInFlightFences.resize(MAX_FRAMES_IN_FLIGHT);
     //信号量
     VkSemaphoreCreateInfo semaphoreInfo{};
     semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1567,6 +1743,10 @@ void HelloTriangleApplication::createSyncObjects() {
             vkCreateFence(this->_logicDevice, &fenceInfo, nullptr, &this->_inFlightFences[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create semaphores!");
         }
+        if (vkCreateSemaphore(this->_logicDevice, &semaphoreInfo, nullptr, &this->_computeFinishedSemaphores[i]) != VK_SUCCESS ||
+            vkCreateFence(this->_logicDevice, &fenceInfo, nullptr, &this->_computeInFlightFences[i]) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create compute synchronization objects for a frame!");
+        }
     }
 }
 
@@ -1578,106 +1758,95 @@ void HelloTriangleApplication::createSyncObjects() {
 * 提交已记录的命令缓冲区到GPU进行绘制
 * 展示交换链图像
 */
-void HelloTriangleApplication::drawFrame() {
-    /**
-    * 1-每一帧开始时等待上一帧
-    * VK_TRUE--表示等待所有的栅栏
-    * timeout--表示等待的超时参数
-    * UINT64_MAX参数表示如果栅栏一直没有信号，我们将一直等待
-    */
-    //----------------------------------阻塞------------------------------------------------
-    //此函数将阻塞cpu，一直等待gpu发送上一帧绘制完成为止
+
+void HelloTriangleApplication::drawFrame()
+{
+    VkSubmitInfo submitInfo{};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    // Compute submission        
+    vkWaitForFences(this->_logicDevice, 1, &this->_computeInFlightFences[this->_currentFrame], VK_TRUE, UINT64_MAX);
+    updateUniformBuffer(this->_currentFrame);
+    vkResetFences(this->_logicDevice, 1, &this->_computeInFlightFences[this->_currentFrame]);
+
+    vkResetCommandBuffer(this->_computeCommandBuffers[this->_currentFrame], /*VkCommandBufferResetFlagBits*/ 0);
+    //录制命令缓冲区
+    recordComputeCommandBuffer(this->_computeCommandBuffers[this->_currentFrame]);
+
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &this->_computeCommandBuffers[this->_currentFrame];
+    //绘制完毕发出的信号量_computeFinishedSemaphores
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &this->_computeFinishedSemaphores[this->_currentFrame];
+    //绘制完毕后触发栅栏信号量_computeInFlightFences
+
+    //计算着色器命令缓冲区执行绘制完毕会同时发出_computeFinishedSemaphores/_computeInFlightFences两个信号量
+    if (vkQueueSubmit(this->_computeQueue, 1, &submitInfo, this->_computeInFlightFences[this->_currentFrame]) != VK_SUCCESS) {
+        throw std::runtime_error("failed to submit compute command buffer!");
+    };
+
+    //提交图形命令缓冲区指令
+    // Graphics submission
     vkWaitForFences(this->_logicDevice, 1, &this->_inFlightFences[this->_currentFrame], VK_TRUE, UINT64_MAX);
-    /**
-    * 2-从交换链获取图像--会一直阻塞，获取不到图像会一直阻塞，直到timeout，如果timeout = UINT64_MAX将会一直等待，程序会卡住在此处，
-    * 获取成功后，函数阻塞结束，imageIndex将可用，但是this->_imageAvailableSemaphor却不一定有信号，因为屏幕端可能仍在扫描这张图片的最后几行，
-    * 但是函数阻塞结束后，程序将继续往下运行，可以进行顶点变换，光栅化等操作，直到运行到需要等待this->_imageAvailableSemaphor的地方，
-    * 当展示引擎完成所有的工作，彻底释放显存，gpu会触发this->_imageAvailableSemaphor这个信号量，然后渲染引擎将往这张图像进行写入操作。
-    */
+
     uint32_t imageIndex;
-    //----------------------------------阻塞------------------------------------------------
-    //阻塞结束拿到imageIndex后，this->_imageAvailableSemaphores[this->_currentFrame]不一定有信号量，因为显示引擎可能正在扫描imageIndex这张图
     VkResult result = vkAcquireNextImageKHR(this->_logicDevice, this->_swapChain, UINT64_MAX, this->_imageAvailableSemaphores[this->_currentFrame], VK_NULL_HANDLE, &imageIndex);
-    if (result == VK_ERROR_OUT_OF_DATE_KHR)//窗口大小发生了调整-需要重建交换连 
-    {
-        this->reCreateSwapChain();
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        reCreateSwapChain();
         return;
     }
     else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         throw std::runtime_error("failed to acquire swap chain image!");
     }
 
-    //更新uniform缓冲区
-    updateUniformBuffer(this->_currentFrame);
-
-
-    //3-信号量发送成功，等待完成，重置栅栏为无信号状态
     vkResetFences(this->_logicDevice, 1, &this->_inFlightFences[this->_currentFrame]);
-    //4-重置命令缓冲区-以便其能够被录制
-    vkResetCommandBuffer(this->_commandBuffers[this->_currentFrame], 0);
-    //5-录制命令缓冲区
+
+    vkResetCommandBuffer(this->_commandBuffers[this->_currentFrame], /*VkCommandBufferResetFlagBits*/ 0);
     recordCommandBuffer(this->_commandBuffers[this->_currentFrame], imageIndex);
-    
-    //6-提交命令缓冲区，录制结束，commandBuffer提交到gpu准备执行
-    VkSubmitInfo submitInfo{};
+
+    //等待_computeFinishedSemaphores-计算着色器运行完毕，_imageAvailableSemaphores-呈现引擎读取完毕（交换链可用）
+    VkSemaphore waitSemaphores[] = { this->_computeFinishedSemaphores[this->_currentFrame], this->_imageAvailableSemaphores[this->_currentFrame] };
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+    submitInfo = {};
     submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
-    /**指定等待信号量-信号量有信号才开始执行，
-    * 指定等待的阶段，在最终要写入图像时才开始等待，
-    * 而顶点输入 -> 顶点着色器 -> 几何着色器 -> 光栅化 -> 片元着色器这些阶段都可以执行不需要等待，
-    * 当最终要写入帧缓冲时，必须等待可用的图像进行写入，
-    * 在图像可用时才向图像写入颜色，因此我们指定了图形管线中写入颜色附件的阶段
-    */
-
-    //上面vkAcquireNextImageKHR阻塞结束拿到imageIndex后，this->_imageAvailableSemaphores[this->_currentFrame]并不一定有信号量，
-    //所以提交的指令需要指定等待这个this->_imageAvailableSemaphores[this->_currentFrame]信号量
-    VkSemaphore waitSemaphores[] = { this->_imageAvailableSemaphores[this->_currentFrame] };
-    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.waitSemaphoreCount = 2;
     submitInfo.pWaitSemaphores = waitSemaphores;
     submitInfo.pWaitDstStageMask = waitStages;
-    //指定要提交执行的命令缓冲区
     submitInfo.commandBufferCount = 1;
     submitInfo.pCommandBuffers = &this->_commandBuffers[this->_currentFrame];
-
-    //指定命令缓冲区执行完毕后要向_renderFinishedSemaphore信号量发出信号
-    VkSemaphore signalSemaphores[] = { this->_renderFinishedSemaphores[this->_currentFrame] };
+    //绘制完毕后发出的信号量_renderFinishedSemaphores
     submitInfo.signalSemaphoreCount = 1;
-    submitInfo.pSignalSemaphores = signalSemaphores;
-    /**
-    * 命令缓冲区提交到图形绘制队列/绘制引擎（作用于后缓冲），GPU开始执行，
-    * 最后一个参数指向一个可选的“栅栏”，当命令缓冲区执行完毕时，该栅栏会发出信号，在下一帧中，CPU 将等待此命令缓冲区执行完毕，同时触发_renderFinishedSemaphore信号量发出信号，
-    * 即命令缓冲区执行完毕（GPU绘制完毕）时同时触发_inFlightFence和_renderFinishedSemaphore两个信号量。
-    */
-    //----------------------------------------------------不阻塞-----------------------------------------------------
+    submitInfo.pSignalSemaphores = &this->_renderFinishedSemaphores[this->_currentFrame];
+    //绘制完毕后发出的信号量_renderFinishedSemaphores和_inFlightFences两个信号量
     if (vkQueueSubmit(this->_graphicsDrawQueue, 1, &submitInfo, this->_inFlightFences[this->_currentFrame]) != VK_SUCCESS) {
         throw std::runtime_error("failed to submit draw command buffer!");
     }
 
-    //7-绘制完成后将图像提交给交换链，准备呈现，最终使其显示在屏幕上
+    //提交给呈现引擎
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = signalSemaphores;//展示引擎将一直则塞，直到收到这个信号时（_renderFinishedSemaphore）将进行呈现展示
+    presentInfo.pWaitSemaphores = &this->_renderFinishedSemaphores[this->_currentFrame];
 
     VkSwapchainKHR swapChains[] = { this->_swapChain };
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = swapChains;
+
     presentInfo.pImageIndices = &imageIndex;
 
-    presentInfo.pResults = nullptr; // Optional
-    //提交到呈现队列/展示引擎-（作用于前缓冲)-准备显示--vkQueuePresentKHR函数会向交换链提交显示图像的请求
-     //----------------------------------------------------不阻塞-----------------------------------------------------
-    VkResult result1 = vkQueuePresentKHR(this->_presentQueue, &presentInfo);
-    if (result1 == VK_ERROR_OUT_OF_DATE_KHR || result1 == VK_SUBOPTIMAL_KHR || this->_framebufferResized) //交换链过期-需要重建
-    {
+    result = vkQueuePresentKHR(this->_presentQueue, &presentInfo);
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || this->_framebufferResized) {
         this->_framebufferResized = false;
-        this->reCreateSwapChain();
+        reCreateSwapChain();
     }
     else if (result != VK_SUCCESS) {
         throw std::runtime_error("failed to present swap chain image!");
     }
+
     this->_currentFrame = (this->_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
@@ -1743,27 +1912,6 @@ void HelloTriangleApplication::createBuffer(
 }
 
 void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
-
-#if 0
-    //内存传输也需要命令缓冲区
-    VkCommandBufferAllocateInfo allocInfo{};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandPool = this->_commandPool;
-    allocInfo.commandBufferCount = 1;
-    VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(this->_logicDevice, &allocInfo, &commandBuffer);
-    
-    VkCommandBufferBeginInfo beginInfo{};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;//命令缓冲区进行传输工作，且只会使用一次命令缓冲区，并且会等待函数执行完毕后再返回
-
-    //记录命令缓冲区
-    if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
-        throw std::runtime_error("failed to begin recording command buffer!");
-    }
-#endif // 0
-
     //内存传输也需要命令缓冲区
     VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
     VkBufferCopy copyRegion{};
@@ -1772,23 +1920,9 @@ void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer
     copyRegion.size = size;
     vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
     this->endSingleTimeCommands(commandBuffer);
-
-#if 0
-    vkEndCommandBuffer(commandBuffer);
-    //记录完毕准备执行
-    VkSubmitInfo submitInfo{};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
-    //发送到GPU绘制队列准备执行
-    vkQueueSubmit(this->_graphicsDrawQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    //强制阻塞等待执行完毕
-    vkQueueWaitIdle(this->_graphicsDrawQueue);
-    //清理用于传输操作的命令缓冲区
-    vkFreeCommandBuffers(this->_logicDevice, this->_commandPool, 1, &commandBuffer);
-#endif // 0
 }
 
+#if 0
 void HelloTriangleApplication::createVertexBuffer()
 {
     VkDeviceSize bufferSize = sizeof(this->_vertices[0]) * this->_vertices.size();
@@ -1802,7 +1936,12 @@ void HelloTriangleApplication::createVertexBuffer()
     * 或者是存放需要 CPU 每帧频繁更新且数据量极小的内容（如 Uniform Buffer）。
     */
     //VK_MEMORY_PROPERTY_HOST_COHERENT_BIT：内存连贯性。保证 CPU 写入后 GPU 立即能看到，不需要手动调用 vkFlushMappedMemoryRanges 刷新缓存。
-    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+    createBuffer(
+        bufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+        stagingBuffer, 
+        stagingBufferMemory);
 
     //-显存映射到内存（cpu可以访问）数据copy--也可以指定特殊值VK_WHOLE_SIZE来映射整个内存
     void* data;
@@ -1814,7 +1953,12 @@ void HelloTriangleApplication::createVertexBuffer()
     // VK_BUFFER_USAGE_TRANSFER_DST_BIT：缓冲区用作内存传输操作中的目标位置
     // VK_BUFFER_USAGE_VERTEX_BUFFER_BIT：缓冲区用作真实的顶点缓冲区
     // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT，显卡专用内存，GPU读取非常快
-    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, this->_vertexBuffer, this->_vertexBufferMemory);
+    createBuffer(
+        bufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+        this->_vertexBuffer, 
+        this->_vertexBufferMemory);
     //缓冲区复制
     copyBuffer(stagingBuffer, this->_vertexBuffer, bufferSize);
     //复制完毕后需对暂存缓冲区进行清理
@@ -1846,6 +1990,7 @@ void HelloTriangleApplication::createIndexBuffer()
     vkDestroyBuffer(this->_logicDevice, stagingBuffer, nullptr);
     vkFreeMemory(this->_logicDevice, stagingBufferMemory, nullptr);
 }
+#endif // 0
 
 //创建uniform缓冲区
 void HelloTriangleApplication::createUniformBuffers()
@@ -1865,17 +2010,9 @@ void HelloTriangleApplication::createUniformBuffers()
 
 //更新uniform缓冲区
 void HelloTriangleApplication::updateUniformBuffer(uint32_t currentImage) {
-    static auto startTime = std::chrono::high_resolution_clock::now();
 
-    auto currentTime = std::chrono::high_resolution_clock::now();
-    float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
-    
     UniformBufferObject ubo{};
-    ubo._model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-
-    ubo._view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    ubo._proj = glm::perspective(glm::radians(45.0f), this->_swapChainExtent.width / (float)this->_swapChainExtent.height, 0.1f, 10.0f);
-    ubo._proj[1][1] *= -1;
+    ubo.deltaTime = this->_lastFrameTime * 2.0f;
     memcpy(this->_uniformBuffersMappedData[currentImage], &ubo, sizeof(ubo));
 }
 
@@ -1896,9 +2033,7 @@ void HelloTriangleApplication::createDescriptorSetLayout()
     VkDescriptorSetLayoutBinding uboLayoutBinding{};
     //1-binding = 0：槽位编号（插孔编号），这严格对应了在 GLSL 着色器代码里写的 layout(binding = 0)
     uboLayoutBinding.binding = 0;
-    //2-descriptorType：描述符类型
-    //VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER 表示这个槽位专门用来插“Uniform 缓冲区（UBO）”
-    //（如果以后传贴图，这里就会变成 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER）
+    //2-descriptorType：描述符类型（UBO）
     uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     //descriptorCount表示 layout(binding = X) 这个槽位需要创建多少个描述符，一个描述符就是一个指针，它只能指向 1 块具体的显存资源（1 个 Buffer 或者 1 张 Texture）。
     //layout(set = 0, binding = 1) uniform sampler2D textures[10];就需要descriptorCount= 10，表示创建10个描述符，指向十块指针内存
@@ -1912,6 +2047,7 @@ void HelloTriangleApplication::createDescriptorSetLayout()
     //创建纹理图像描述符
     VkDescriptorSetLayoutBinding samplerLayoutBinding{};
     samplerLayoutBinding.binding = 1;
+    //image-texture
     samplerLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     samplerLayoutBinding.descriptorCount = 1;
     samplerLayoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1926,11 +2062,44 @@ void HelloTriangleApplication::createDescriptorSetLayout()
     layoutInfo.pBindings = bindings.data();
 
 
-
-
     //this->_descriptorSetLayout是上面 layout(binding = X)槽位的集合
     if (vkCreateDescriptorSetLayout(this->_logicDevice, &layoutInfo, nullptr, &this->_descriptorSetLayout) != VK_SUCCESS) {
         throw std::runtime_error("failed to create descriptor set layout!");
+    }
+}
+
+void HelloTriangleApplication::createComputeDescriptorSetLayout() {
+
+    std::array<VkDescriptorSetLayoutBinding, 3> layoutBindings{};
+    
+    //ubo
+    layoutBindings[0].binding = 0;
+    layoutBindings[0].descriptorCount = 1;
+    layoutBindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    layoutBindings[0].pImmutableSamplers = nullptr;
+    layoutBindings[0].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    //ssbo
+    layoutBindings[1].binding = 1;
+    layoutBindings[1].descriptorCount = 1;
+    layoutBindings[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    layoutBindings[1].pImmutableSamplers = nullptr;
+    layoutBindings[1].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    //ssbo
+    layoutBindings[2].binding = 2;
+    layoutBindings[2].descriptorCount = 1;
+    layoutBindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    layoutBindings[2].pImmutableSamplers = nullptr;
+    layoutBindings[2].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+    VkDescriptorSetLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 3;
+    layoutInfo.pBindings = layoutBindings.data();
+
+    if (vkCreateDescriptorSetLayout(this->_logicDevice, &layoutInfo, nullptr, &this->_computeDescriptorSetLayout) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create compute descriptor set layout!");
     }
 }
 
@@ -1951,19 +2120,25 @@ void HelloTriangleApplication::createDescriptorSetLayout()
 //描述符池:资源的总数量，规定包含的各种描述符（descriptor）类型、总的数量，可开辟的描述符集（descriptorSet）的总数量
 void HelloTriangleApplication::createDescriptorPool() {
     //规划池子里要装什么类型的东西、总共装多少个
-    
-    //两种类型的描述符UBO/SAMPLER，每种两个
-    std::array<VkDescriptorPoolSize, 2> poolSizes{};
 
-    //描述符--VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER-ubo及数量
+    //两种类型的描述符UBO/SSBO，每种两个
+    std::array<VkDescriptorPoolSize, 2> poolSizes{};
+    
+    //描述符VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER-ubo数量
     poolSizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     //descriptorCount表示这种描述符类型的全场总的库存量；
     poolSizes[0].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
 
-    ///描述符--VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER-纹理及数量
+#if 0//原先注释
     poolSizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     //descriptorCount表示这种描述符类型的全场总的库存量；
     poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+#endif // 0
+
+    //四个ssbo，每一帧需要两个ssbo（上一帧和下一帧的ssbo）
+    poolSizes[1].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    poolSizes[1].descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT) * 2;
+
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -1977,6 +2152,7 @@ void HelloTriangleApplication::createDescriptorPool() {
     }
 }
 
+#if 0
 //创建一次描述符集（批量创建batch），可以一次性创建多个描述符集
 void HelloTriangleApplication::createDescriptorSets()
 {
@@ -2007,20 +2183,17 @@ void HelloTriangleApplication::createDescriptorSets()
         imageInfo.imageView = this->_textureImageView;
         imageInfo.sampler = this->_textureSampler;
 
+        //把具体的真实资源this->_uniformBuffers/this->_textureImageView/this->_textureSampler绑定到_descriptorSets上
         std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
 
         descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         descriptorWrites[0].dstSet = this->_descriptorSets[i];
         descriptorWrites[0].dstBinding = 0;//更新对应的槽位binding--layout(binding = 0)
-        
-        
         //可以一次性更新数组中的多个描述符，从索引dstArrayElement开始，该descriptorCount字段指定要更新的描述符数组元素数量。
         descriptorWrites[0].dstArrayElement = 0;//描述符可以是数组，因此需要指定要更新的描述符数组中的初始索引
         //如果0号槽位对应十个描述符，descriptorWrite.descriptorCount= 10
         descriptorWrites[0].descriptorCount = 1;
-        
-        
         descriptorWrites[0].pBufferInfo = &bufferInfo;
         descriptorWrites[0].pImageInfo = nullptr; // Optional--imagedata
         descriptorWrites[0].pTexelBufferView = nullptr; // Optional--bufferView
@@ -2034,7 +2207,73 @@ void HelloTriangleApplication::createDescriptorSets()
         descriptorWrites[1].pImageInfo = &imageInfo;
         vkUpdateDescriptorSets(this->_logicDevice, static_cast<uint32_t>(descriptorWrites.size()), descriptorWrites.data(), 0, nullptr);
     }
+}
+#endif // 0
 
+void HelloTriangleApplication::createComputeDescriptorSets() {
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, this->_computeDescriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = this->_descriptorPool;
+    allocInfo.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT);
+    allocInfo.pSetLayouts = layouts.data();
+
+    this->_computeDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(this->_logicDevice, &allocInfo, this->_computeDescriptorSets.data()) != VK_SUCCESS) {
+        throw std::runtime_error("failed to allocate descriptor sets!");
+    }
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+
+       //ubo
+        VkDescriptorBufferInfo uniformBufferInfo{};
+        uniformBufferInfo.buffer = this->_uniformBuffers[i];
+        uniformBufferInfo.offset = 0;
+        uniformBufferInfo.range = sizeof(UniformBufferObject);
+
+        //把具体的真实资源this->_uniformBuffers绑定到_descriptorSets上
+        std::array<VkWriteDescriptorSet, 3> descriptorWrites{};
+        descriptorWrites[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[0].dstSet = this->_computeDescriptorSets[i];
+        descriptorWrites[0].dstBinding = 0;
+        descriptorWrites[0].dstArrayElement = 0;
+        descriptorWrites[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptorWrites[0].descriptorCount = 1;
+        descriptorWrites[0].pBufferInfo = &uniformBufferInfo;
+
+        //ssbo0
+        //storageBufferInfoLastFrame/storageBufferInfoCurrentFrame保证0-1或者1-0
+        VkDescriptorBufferInfo storageBufferInfoLastFrame{};
+        storageBufferInfoLastFrame.buffer = this->_shaderStorageBuffers[(i + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT];
+        storageBufferInfoLastFrame.offset = 0;
+        storageBufferInfoLastFrame.range = sizeof(Particle) * PARTICLE_COUNT;
+
+        //把具体的真实资源this->_shaderStorageBuffers绑定到_descriptorSets上
+        descriptorWrites[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[1].dstSet = this->_computeDescriptorSets[i];
+        descriptorWrites[1].dstBinding = 1;
+        descriptorWrites[1].dstArrayElement = 0;
+        descriptorWrites[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        descriptorWrites[1].descriptorCount = 1;
+        descriptorWrites[1].pBufferInfo = &storageBufferInfoLastFrame;
+
+        //ssbo1
+        VkDescriptorBufferInfo storageBufferInfoCurrentFrame{};
+        storageBufferInfoCurrentFrame.buffer = this->_shaderStorageBuffers[i];
+        storageBufferInfoCurrentFrame.offset = 0;
+        storageBufferInfoCurrentFrame.range = sizeof(Particle) * PARTICLE_COUNT;
+
+        //把具体的真实资源this->_shaderStorageBuffers绑定到_descriptorSets上
+        descriptorWrites[2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptorWrites[2].dstSet = this->_computeDescriptorSets[i];
+        descriptorWrites[2].dstBinding = 2;
+        descriptorWrites[2].dstArrayElement = 0;
+        descriptorWrites[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        descriptorWrites[2].descriptorCount = 1;
+        descriptorWrites[2].pBufferInfo = &storageBufferInfoCurrentFrame;
+
+        vkUpdateDescriptorSets(this->_logicDevice, 3, descriptorWrites.data(), 0, nullptr);
+    }
 }
 
 VkCommandBuffer HelloTriangleApplication::beginSingleTimeCommands() {
@@ -2441,6 +2680,7 @@ void HelloTriangleApplication::generateMipmaps(
 * 
 */
 //创建纹理图像
+#if 0
 void HelloTriangleApplication::createTextureImage()
 {
     std::string exeDir = getExeDirectory();
@@ -2491,7 +2731,7 @@ void HelloTriangleApplication::createTextureImage()
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         this->_textureImage,
         this->_textureImageMemory);
-#if 0
+#if 0//原先注释
     //VK_IMAGE_TILING_LINEAR：纹理元素按照行优先顺序排列，就像我们的 pixels数组一样。
     //VK_IMAGE_TILING_OPTIMAL：纹理元素按照实现定义的顺序排列，以实现最佳访问。
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;//从着色器中高效访问
@@ -2523,6 +2763,7 @@ void HelloTriangleApplication::createTextureImage()
     //创建图像视图
     this->_textureImageView = this->createImageView(this->_textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, this->_mipLevels);
 }
+#endif // 0
 
 VkImageView HelloTriangleApplication::createImageView(
     VkImage image, 
@@ -2554,6 +2795,7 @@ VkImageView HelloTriangleApplication::createImageView(
     return imageView;
 }
 
+#if 0
 //创建纹理采样器
 void HelloTriangleApplication::createTextureSampler()
 {
@@ -2606,6 +2848,7 @@ void HelloTriangleApplication::createTextureSampler()
         throw std::runtime_error("failed to create texture sampler!");
     }
 }
+#endif // 0
 
 //描述符相关重点总结：
 /**
@@ -2711,6 +2954,7 @@ bool hasStencilComponent(VkFormat format) {
     return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
+#if 0
 //深度缓存-查找格式/创建图像
 //VK_IMAGE_TILING_LINEAR（线性布局）, CPU 可以直接理解这种格式, GPU 访问效率非常低;
 //VK_IMAGE_TILING_OPTIMAL（最优布局 / 瓦片布局）, 像素在内存中是以显卡厂商私有的、优化过的块状（Block / Tile）方式存放的, GPU 访问效率极高！
@@ -2755,10 +2999,6 @@ void HelloTriangleApplication::loadModel()
                 attrib.texcoords[2 * index.texcoord_index + 0],
                 1.0 - attrib.texcoords[2 * index.texcoord_index + 1]
             };
-#if 0
-            this->_vertices.push_back(vertex);
-            this->_indices.push_back(this->_indices.size());
-#else
             //确保顶点去重
             if (uniqueVertices.count(vertex) == 0) {
                 uniqueVertices[vertex] = static_cast<uint32_t>(this->_vertices.size());
@@ -2766,7 +3006,6 @@ void HelloTriangleApplication::loadModel()
             }
 
             this->_indices.push_back(uniqueVertices[vertex]);
-#endif // 0
         }
     }
 }
@@ -2808,4 +3047,65 @@ void HelloTriangleApplication::createColorResources()
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
         this->_multiSampleColorImage, this->_multiSampleColorImageMemory);
     this->_multiSampleColorImageView = this->createImageView(this->_multiSampleColorImage, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT, 1);
+}
+
+#endif // 0
+
+void HelloTriangleApplication::createShaderStorageBuffers()
+{
+    this->_shaderStorageBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    this->_shaderStorageBuffersMemory.resize(MAX_FRAMES_IN_FLIGHT);
+
+    // Initialize particles
+    std::default_random_engine rndEngine((unsigned)time(nullptr));
+    std::uniform_real_distribution<float> rndDist(0.0f, 1.0f);
+
+    // Initial particle positions on a circle
+    std::vector<Particle> particles(PARTICLE_COUNT);
+    for (auto& particle : particles) {
+        float r = 0.25f * sqrt(rndDist(rndEngine));
+        float theta = rndDist(rndEngine) * 2 * 3.14159265358979323846;
+        float x = r * cos(theta) * HEIGHT / WIDTH;
+        float y = r * sin(theta);
+        particle._position = glm::vec2(x, y);
+        particle._velocity = glm::normalize(glm::vec2(x, y)) * 0.00025f;
+        particle._color = glm::vec4(rndDist(rndEngine), rndDist(rndEngine), rndDist(rndEngine), 1.0f);
+    }
+
+
+    VkDeviceSize bufferSize = sizeof(Particle) * PARTICLE_COUNT;
+
+    VkBuffer stagingBuffer;
+    VkDeviceMemory stagingBufferMemory;
+    createBuffer(
+        bufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+        stagingBuffer,
+        stagingBufferMemory);
+
+    void* data;
+    vkMapMemory(this->_logicDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+    memcpy(data, particles.data(), (size_t)bufferSize);
+    vkUnmapMemory(this->_logicDevice, stagingBufferMemory);
+
+    for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        createBuffer(
+            bufferSize, 
+            /**
+            * VK_BUFFER_USAGE_STORAGE_BUFFER_BIT (存储缓冲区标志)
+            * 用途：允许该缓冲区在着色器（Shader）中作为 存储缓冲区（Storage Buffer / SSBO） 被绑定和使用。
+            * 特点：
+            * 可读可写：与只能读取的统一缓冲区（Uniform Buffer, UBO）不同，着色器（特别是计算着色器 Compute Shader）可以随时读取和写入这种缓冲区。
+            * 容量大：它通常用于传递或存储大量数据，不受 UBO 严格的大小限制。
+            * 常见场景：在着色器中保存物理模拟的数据、存储游戏世界中所有对象的变换矩阵、或者作为计算着色器输出计算结果的地方。
+            */
+            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, 
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+            this->_shaderStorageBuffers[i], 
+            this->_shaderStorageBuffersMemory[i]);
+        // Copy data from the staging buffer (host) to the shader storage buffer (GPU)
+        copyBuffer(stagingBuffer, this->_shaderStorageBuffers[i], bufferSize);
+    }
+
 }
