@@ -35,7 +35,6 @@ struct SwapChainSupportDetails {
     std::vector<VkPresentModeKHR> presentModes;//可用的演示模式（立即模式/双缓冲垂直同步/三缓冲）
 };
 
-#if 0
 //顶点信息
 struct Vertex {
     glm::vec3 _pos;
@@ -59,7 +58,6 @@ namespace std {
         }
     };
 }
-#endif // 0
 
 struct Particle {
     glm::vec2 _position;
@@ -73,6 +71,14 @@ struct Particle {
 struct UniformBufferObject {
     float deltaTime = 1.0f;
 };
+
+//ubo
+struct UniformBufferObject_LoadModel {
+    glm::mat4 _model;
+    glm::mat4 _view;
+    glm::mat4 _proj;
+};
+
 
 class HelloTriangleApplication {
 public:
@@ -166,9 +172,6 @@ private:
     //针对每个VkImage，都需要创建VKImageView，描述了如何访问图像以及要访问图像的哪个部分
     std::vector<VkImageView> _swapChainImageViews;
 
-    //创建图形管线
-    void createGraphicsPipeline();
-    VkPipeline _graphicsPipeline;
     
     //创建着色器模块
     VkShaderModule createShaderModule(const std::vector<char>& code);
@@ -231,16 +234,14 @@ public:
     double _lastTime = 0.0f;
 
     //重建交换链--比如窗口大小发生变化，需要重置交换链
-    void reCreateSwapChain();
+    void recreateSwapChain();
     //销毁之前的交换链
     void cleanupSwapChain();
 
-#if 0
     //顶点缓冲区
     void createVertexBuffer();
     //索引缓冲区
     void createIndexBuffer();
-#endif // 0
 
     //内存类型
     uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
@@ -249,11 +250,6 @@ public:
     //复制缓冲区
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 
-    //描述符（Descriptor）:如果想传一些所有顶点共用的全局数据（比如相机的投影矩阵、模型的位置矩阵、或者一张贴图），不能把它塞进顶点里，需要用到描述符（Descriptor）
-   //描述符布局
-    void createDescriptorSetLayout();
-    VkDescriptorSetLayout _descriptorSetLayout;
-    VkPipelineLayout _pipelineLayout;
 
 
     void createUniformBuffers();
@@ -298,12 +294,11 @@ public:
         uint32_t mipLevels);
     //复制图像
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
-#if 0
+   
     //创建纹理图像
     void createTextureImage();
     //创建纹理采样器
     void createTextureSampler();
-#endif // 0
 
     //查找支持格式VkFormat
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
@@ -327,33 +322,9 @@ private:
         VkImageAspectFlags aspectFlags,
         uint32_t mipLevels);
 
-#if 0
     void loadModel();
-#endif // 0
 
 
-    //顶点属性
-    /**
-        const std::vector<Vertex> _vertices = {
-        {{-0.5f, -0.5f,0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-        {{0.5f, -0.5f,0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-        {{0.5f, 0.5f,0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-        {{-0.5f, 0.5f,0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-
-
-         {{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-        {{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-        {{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-        {{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
-        };
-
-        const std::vector<uint16_t> _indices = {
-        0, 1, 2, 2, 3, 0,
-        4, 5, 6, 6, 7, 4
-        };
-    */
-
-#if 0
     //顶点属性
     std::vector<Vertex> _vertices;
     std::vector<uint32_t> _indices;
@@ -364,14 +335,17 @@ private:
 
     VkBuffer _indexBuffer;
     VkDeviceMemory _indexBufferMemory;
-#endif // 0
 
-    //ubo
+    //ubo--用于计算管线
     std::vector<VkBuffer> _uniformBuffers;
     std::vector<VkDeviceMemory> _uniformBuffersMemory;
     std::vector<void*> _uniformBuffersMappedData;
 
-#if 0
+    std::vector<VkBuffer> _uniformBuffersLoadModel;
+    std::vector<VkDeviceMemory> _uniformBuffersMemoryLoadModel;
+    std::vector<void*> _uniformBuffersMappedDataLoadModel;
+
+
     //texture
     VkImage _textureImage;//图像
     VkDeviceMemory _textureImageMemory;//内存
@@ -399,7 +373,7 @@ private:
     VkImage _multiSampleColorImage;
     VkDeviceMemory _multiSampleColorImageMemory;
     VkImageView _multiSampleColorImageView;
-#endif // 0
+
     VkSampleCountFlagBits _msaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
 
@@ -429,9 +403,30 @@ private:
     std::vector<VkBuffer> _shaderStorageBuffers;
     std::vector<VkDeviceMemory> _shaderStorageBuffersMemory;
 
+    //描述符（Descriptor）:如果想传一些所有顶点共用的全局数据（比如相机的投影矩阵、模型的位置矩阵、或者一张贴图），不能把它塞进顶点里，需要用到描述符（Descriptor）
+    //计算管线
     VkDescriptorSetLayout _computeDescriptorSetLayout;
+    void createComputeDescriptorSetLayout();
+
+    //loadModel管线
+    void createDescriptorSetLayout();
+    VkDescriptorSetLayout _descriptorSetLayout;
+
+
+    //计算管线
     VkPipelineLayout _computePipelineLayout;
     VkPipeline _computePipeline;
-    void createComputeDescriptorSetLayout();
     void createComputePipeline();
+
+
+    //计算完毕后进行绘制的图形管线
+    void createGraphicsPipeline();
+    VkPipelineLayout _pipelineLayout;
+    VkPipeline _graphicsPipeline;
+
+
+    //普通图形管线
+    VkPipelineLayout _loadModelPipelineLayout;
+    VkPipeline _loadModelPipeline;
+    void createLoadModelPipeline();
 };
