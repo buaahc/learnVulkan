@@ -320,11 +320,8 @@ void VulkanSwapChain::createDepthResources()
         this->_vkContext->getPhysicalDevice()
     );
     this->_depthImageView = vkDB::createImageView(this->_depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT, 1, this->_vkContext->getLogicDevice());
-
     //布局转换
-    VkCommandBuffer commandBuffer = this->_vkCommandManager->beginSingleTimeCommands();
-    vkDB::transitionImageLayout(this->_depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1, commandBuffer);
-    this->_vkCommandManager->endSingleTimeCommands(commandBuffer);
+    vkDB::transitionImageLayout(this->_depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, 1, this->_vkCommandManager.get());
 }
 
 //多重采样颜色缓冲区
@@ -490,16 +487,23 @@ void VulkanSwapChain::createRenderPass()
     //dstSubpass（消费者）运行到 dstStageMask 阶段必须进行等待，等待 srcSubpass（生产者）运行完毕 srcStageMask 阶段，dstStageMask 才能继续运行。
     //srcAccessMask 表示 src 运行完毕时对内存做了什么操作，而 dstAccessMask 表示 dst 等待结束开始运行时，要对内存做什么操作。
 
-
+    //子通道依赖的核心：就是当前子通道和当前子通道之前的绘制操作，对各种缓冲区的读写权限操作进行等待开关限制；
     VkSubpassDependency dependency{};
     //VK_SUBPASS_EXTERNAL 仅仅是一个**“时间边界代号”，因为当前程序是单renderPass操作，所以这里可以理解为上一帧的所有操作；
+    //VK_SUBPASS_EXTERNAL 仅仅是一个**“时间边界代号”，因为当前程序是单renderPass操作，所以这里可以理解为上一帧的所有操作；
+    //VK_SUBPASS_EXTERNAL 仅仅是一个**“时间边界代号”，因为当前程序是单renderPass操作，所以这里可以理解为上一帧的所有操作；
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;//指vkCmdBeginRenderPass（本渲染通道开始）之前提交给GPU的所有指令，包括等待呈现引擎的那个信号量--进入本次渲染通道之前的所有操作。
+    
     dependency.dstSubpass = 0;//指的是我们代码里定义的第一个子通道
     //dependency.dstSubpass = VK_SUBPASS_EXTERNAL;//指vkCmdEndRenderPass（本渲染通道结束）之后提交给GPU的所有指令。
-
-    //dstStageMask：表示消费者运行到dstStageMask阶段，必须等待
-    //VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT ：运行到输出颜色阶段必须等待；
-    //VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT：运行到提前深度测试阶段必须等待；
+  
+    /**
+    * dstStageMask：表示消费者运行到dstStageMask阶段，必须等待
+    * VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT ：运行到输出颜色阶段必须等待；
+    * VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT：运行到提前深度测试阶段必须等待，提前深度测试阶段即进行“读取”也进行“写入”；
+    * 那为什么 dstStageMask 不是 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT（管线最开始阶段等待）？：
+    * 因为vulkan是并行计算，需要榨干GPU的性能，vulkanPipeline只有运行到写入颜色或深度时才停下来等待，而运行顶点着色器等其他阶段无需等待；
+    */
     dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
 
     //srcStageMask：等待生产者完成srcStageMask阶段
@@ -511,7 +515,15 @@ void VulkanSwapChain::createRenderPass()
     //srcAccessMask ：要求 srcSubpass 上一帧（生产者）在解除阻塞之前，必须完成颜色和深度的“写入（WRITE）”操作彻底刷入物理显存（Make Available）
     dependency.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    //dstAccessMask ：表示依赖者 dstSubpass 在前置条件满足、解除阻塞开始运行时，明确告诉 GPU，我们的子通道接下来的操作是 写入 (WRITE) 颜色附件/深度附件，请确保我能看到刚才刷入显存的最新数据。
+    /**
+     * dstAccessMask ：表示依赖者 dstSubpass 在前置条件满足、解除阻塞开始运行时，明确告诉 GPU，我们的子通道接下来的操作是 写入(WRITE) 颜色附件 / 深度附件，请确保我能看到刚才刷入显存的最新数据。
+     * 
+     * 为什么是 VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT？：
+     * 因为 dependency.srcSubpass = VK_SUBPASS_EXTERNAL 可以理解为上一帧数据，而本帧运行到 dependency.dstStageMask 阶段时需要进行清屏工作glClear，而glClear 清屏是一种写入操作，
+     * 所以需要dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT
+     * 
+     * 如果本帧数据依赖之前帧的数据那就需要把VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT都加上
+    */
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     //子通道依赖为什么没有设置等待呈现引擎读取扫描完毕呢？因为那是信号量的职责范围，子通道依赖无需设置；

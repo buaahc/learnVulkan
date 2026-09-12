@@ -11,6 +11,7 @@
 #include <vector>
 #include <memory>
 #include "readBuffer.h"
+#include "vulkanCommandManager.h"
 
 using namespace vkDB;
 
@@ -95,6 +96,61 @@ VkImageView vkDB::createImageView(
     return imageView;
 }
 
+void vkDB::createTextureSampler(
+    VkSampler& vkSampler,
+    VkDevice logicDevice, 
+    VkPhysicalDevice physicalDevice)
+{
+    VkSamplerCreateInfo samplerInfo{};
+    samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    samplerInfo.magFilter = VK_FILTER_LINEAR;
+    samplerInfo.minFilter = VK_FILTER_LINEAR;
+
+
+    samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+
+    /**
+    * typedef struct VkPhysicalDeviceProperties {
+    * uint32_t                            apiVersion;
+    * uint32_t                            driverVersion;
+    * uint32_t                            vendorID;
+    * uint32_t                            deviceID;
+    * VkPhysicalDeviceType                deviceType;
+    * char                                deviceName[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+    * uint8_t                             pipelineCacheUUID[VK_UUID_SIZE];
+    * VkPhysicalDeviceLimits              limits;
+    * VkPhysicalDeviceSparseProperties    sparseProperties;
+    * } VkPhysicalDeviceProperties;
+    */
+    //查询设备的基本属性，例如名称、类型和支持的 Vulkan 版本
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+    //各异向性过滤
+    samplerInfo.anisotropyEnable = VK_TRUE;
+    //取值越大效果越好，性能越低，值越小效果越差，性能越高
+    samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+
+    samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    samplerInfo.unnormalizedCoordinates = VK_FALSE;
+    //如果启用了比较功能，则首先会将纹素与某个值进行比较，并将比较结果用于过滤操作。这主要用于阴影贴图的百分比接近度过滤 。
+    samplerInfo.compareEnable = VK_FALSE;
+    samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+
+    //mipmap相关
+    samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    samplerInfo.minLod = 0; // Optional
+    samplerInfo.maxLod = VK_LOD_CLAMP_NONE;
+    samplerInfo.mipLodBias = 0.0f; // Optional
+
+
+    if (vkCreateSampler(logicDevice, &samplerInfo, nullptr, &vkSampler) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create texture sampler!");
+    }
+}
+
 //查询内存类型
 uint32_t vkDB::findMemoryType(
     uint32_t typeFilter,
@@ -131,9 +187,9 @@ void vkDB::transitionImageLayout(
     VkImageLayout oldLayout,
     VkImageLayout newLayout,
     uint32_t mipLevels,
-    VkCommandBuffer commandBuffer)
+    VulkanCommandManager* vulkanCommandManager)
 {
-    //VkCommandBuffer commandBuffer = this->beginSingleTimeCommands();
+    VkCommandBuffer commandBuffer = vulkanCommandManager->beginSingleTimeCommands();
     //流水线屏障通常用于：1-同步资源访问，例如确保在读取缓冲区之前完成写入操作，2-转换图像布局，3-转换队列组所有权，当使用独占模式时（VK_SHARING_MODE_EXCLUSIVE）
     VkImageMemoryBarrier barrier{};
     barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -224,6 +280,5 @@ void vkDB::transitionImageLayout(
         1, &barrier//图像内存屏障
     );
 
-    //todo:
-   //this->endSingleTimeCommands(commandBuffer);
+   vulkanCommandManager->endSingleTimeCommands(commandBuffer);
 }

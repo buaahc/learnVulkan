@@ -17,9 +17,10 @@
 #include <memory>
 #include "vulkanContext.h" 
 
+class VulkanCommandManager;
+
 namespace vkDB
 {
-
     //创建图像对象并分配显存
     void createImage(
         uint32_t width,
@@ -42,20 +43,26 @@ namespace vkDB
         uint32_t mipLevels,
         VkDevice logicDevice);
 
+    void createTextureSampler(
+        VkSampler& vkSampler,
+        VkDevice logicDevice,
+        VkPhysicalDevice physicalDevice);
+
+
     //查询内存类型
     uint32_t findMemoryType(
         uint32_t typeFilter,
         VkMemoryPropertyFlags properties,
         VkPhysicalDevice physicalDevice);
 
-
+    //图像布局转换
     void transitionImageLayout(
         VkImage image,
         VkFormat format,
         VkImageLayout oldLayout,
         VkImageLayout newLayout,
         uint32_t mipLevels,
-        VkCommandBuffer commandBuffer);
+        VulkanCommandManager* vulkanCommandManager);
 
     //模板格式？
     bool hasStencilComponent(VkFormat format);
