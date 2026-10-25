@@ -5,14 +5,30 @@
 #include <algorithm> // Necessary for std::clamp
 #include "readBuffer.h"
 
+//创建交换链
+/**
+* 交换链本质上就是一组图像（Images）的队列，显卡负责在这些图像上画画，画好一张就送到屏幕上显示，屏幕显示完再还给显卡继续画，如此循环。
+* 交换链的动态循环系统：绘制--等待呈现--呈现；
+* 缓冲（几张图）和呈现模式不是一个概念:
+* 三缓冲+垂直同步模式，A/B/C三张图严格按照绘制-等待呈现-呈现序列排队；
+* 三缓冲+邮箱模式：展示引擎（显示器）正在呈现A，B绘制完毕后会放到等待呈现区，接下来绘制C，C绘制完毕后，如果A画面仍在呈现，那C将直接替换到等待呈现队列中的B，
+* 下一次展示引擎将呈现C画面,B画面被丢弃了，而被丢弃的B画面会被重置为空闲队列，又被重新绘制。
+*/
+
+//image/imageView（真实显存）---renderPass（渲染通道说明书，显存使用说明书）----frameBuffer（将显存与显存说明书链接起来）
+
 VulkanSwapChain::VulkanSwapChain(
     std::shared_ptr<VulkanContext> context, 
     std::shared_ptr<VulkanCommandManager>vkCommandManager)
 {
     this->_vkContext = context;
     this->_vkCommandManager = vkCommandManager;
+    this->createSwapChain();//swapChainImage/swapChainImageView
+    this->createRenderPass();//渲染通道-或者显存说明书
+    this->createDepthResources();//depthImage/depthImageView
+    this->createMultiSamplerColorResources();//muitlSamplerColorImage/mutilSamplerColorImageView
+    this->createFramebuffers();//创建帧缓冲，将renderPass和vkImageView连接起来
 }
-
 
 VulkanSwapChain::~VulkanSwapChain()
 {
@@ -52,15 +68,6 @@ SwapChainSupportDetails VulkanSwapChain::querySwapChainSupport(VkPhysicalDevice 
     return details;
 }
 
-//关键步骤六：创建交换链
-/**
-* 交换链本质上就是一组图像（Images）的队列，显卡负责在这些图像上画画，画好一张就送到屏幕上显示，屏幕显示完再还给显卡继续画，如此循环。
-* 交换链的动态循环系统：绘制--等待呈现--呈现；
-* 缓冲（几张图）和呈现模式不是一个概念:
-* 三缓冲+垂直同步模式，A/B/C三张图严格按照绘制-等待呈现-呈现序列排队；
-* 三缓冲+邮箱模式：展示引擎（显示器）正在呈现A，B绘制完毕后会放到等待呈现区，接下来绘制C，C绘制完毕后，如果A画面仍在呈现，那C将直接替换到等待呈现队列中的B，
-* 下一次展示引擎将呈现C画面,B画面被丢弃了，而被丢弃的B画面会被重置为空闲队列，又被重新绘制。
-*/
 //6.1-选择表面格式（颜色深度等）R8B8G8A8-SRGB空间
 VkSurfaceFormatKHR VulkanSwapChain::chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
     for (const auto& availableFormat : availableFormats) {
@@ -204,6 +211,16 @@ void VulkanSwapChain::createSwapChain() {
             VK_IMAGE_ASPECT_COLOR_BIT, 1,
             this->_vkContext->getLogicDevice());
     }
+}
+
+uint32_t VulkanSwapChain::getWidth()
+{
+    return this->_swapChainExtent.width;
+}
+
+uint32_t VulkanSwapChain::getHeight()
+{
+    return this->_swapChainExtent.height;
 }
 
 //6.5-重建交换链--比如窗口大小发生变化，窗口大小发生变化后surface大小也会相应的发生变化，但是交换链大小不会变，两者尺寸大小不一致，呈现肯定出现错误，所以必须要重建交换链--

@@ -6,12 +6,14 @@
 #include <vector>
 
 // 前置声明，避免循环包含
+//=================================================
 class VulkanContext;
 
 class VulkanCommandManager {
 public:
     // 构造时需要 Context 提供逻辑设备和图形队列的索引
     //explicit（明确的） 关键字用来禁止 C++ 编译器在背后偷偷做“隐式类型转换”   
+    //=======================================================================
     explicit VulkanCommandManager(std::shared_ptr<VulkanContext> context);
 
     // 禁用拷贝（避免 CommandPool 被意外复制释放）

@@ -125,7 +125,7 @@ void VulkanBuffer::setBufferData(void* srcData, VkDeviceSize size, VkDeviceSize 
 }
 
 void VulkanBuffer::copyToBuffer(
-     VkBuffer dstBuffer, 
+    VkBuffer dstBuffer, 
     VkDeviceSize size) {
     // 1. 如果 size 是 VK_WHOLE_SIZE，表示用户想写满整个 Buffer
     if (size == VK_WHOLE_SIZE) {

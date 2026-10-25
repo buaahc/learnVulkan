@@ -39,6 +39,16 @@ static void framebufferResizeCallback(GLFWwindow* window, int width, int height)
 VulkanContext::VulkanContext(uint32_t width, uint32_t height, const std::string& title)
 {
     this->initWindow(width, height, title);
+    //类似于注册一家公司
+    this->createInstance();
+    //创建回调函数调试层-接收校验层信息
+    this->setupDebugMessenger();
+    //创建窗口呈现面-用于显示渲染后的图像-//租一块屏幕
+    this->createSurface();
+    //选择物理显卡-//招募一个画师
+    this->pickPhysicalDevice();
+    //激活显卡-逻辑设备-创建绘制队列_graphicsDrawQueue/呈现队列_presentQueue句柄
+    this->createLogicDevice();
 }
 
 void VulkanContext::initWindow(uint32_t width, uint32_t height, const std::string& title) {
@@ -416,7 +426,7 @@ void VulkanContext::createLogicDevice()
     deviceFeatures.samplerAnisotropy = VK_TRUE;
     //deviceFeatures.sampleRateShading = VK_TRUE;
 
-    VkDeviceCreateInfo vkLogicDeviceCreateInfo;
+    VkDeviceCreateInfo vkLogicDeviceCreateInfo{};
 
     vkLogicDeviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     vkLogicDeviceCreateInfo.pQueueCreateInfos = logicDeviceQueueCreateInfos.data();//指向队列创建信息
@@ -453,7 +463,7 @@ void VulkanContext::createLogicDevice()
 //获取最大采样样本
 VkSampleCountFlagBits VulkanContext::getMaxUsableSampleCount() {
     //查询设备的基本属性，例如名称、类型和支持的 Vulkan 版本
-    VkPhysicalDeviceProperties physicalDeviceProperties;
+    VkPhysicalDeviceProperties physicalDeviceProperties{};
     vkGetPhysicalDeviceProperties(this->_physicalDevice, &physicalDeviceProperties);
 
     VkSampleCountFlags counts = physicalDeviceProperties.limits.framebufferColorSampleCounts & physicalDeviceProperties.limits.framebufferDepthSampleCounts;
@@ -478,5 +488,9 @@ void VulkanContext::cleanup()
     vkDestroySurfaceKHR(this->_vkInstance, this->_vkSurface, nullptr);
     vkDestroyInstance(this->_vkInstance, nullptr);
     glfwDestroyWindow(this->_glfwWindow);
+}
 
+double VulkanContext::getFrameTime()
+{
+    return glfwGetTime();
 }

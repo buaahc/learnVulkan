@@ -15,7 +15,9 @@ struct SwapChainSupportDetails {
 class VulkanSwapChain {
 public:
     // 构造时需要 Context 提供设备句柄，同时也需要知道窗口当前的实际大小
-    VulkanSwapChain(std::shared_ptr<VulkanContext> context, std::shared_ptr<VulkanCommandManager>vkCommandManager);
+    VulkanSwapChain(
+        std::shared_ptr<VulkanContext> context,
+        std::shared_ptr<VulkanCommandManager>vkCommandManager);
     ~VulkanSwapChain();
 
     // 禁用拷贝
@@ -46,6 +48,9 @@ public:
     void createMultiSamplerColorResources(); // 如果开启 MSAA
 
     void cleanup();
+    uint32_t getWidth();
+    uint32_t getHeight();
+
 private:
     std::shared_ptr<VulkanContext> _vkContext = nullptr; // 持有 Context 引用
     std::shared_ptr<VulkanCommandManager> _vkCommandManager = nullptr; // 持有 commandManager 引用

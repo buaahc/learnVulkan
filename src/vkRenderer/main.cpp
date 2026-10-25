@@ -7,9 +7,13 @@
 #include <glm/mat4x4.hpp>
 
 #include <iostream>
+#include "vulkanApp.h"
 
 
 int main() {
+
+    VulkanApp app;
+    app.run();
     std::cout << "程序运行完毕，请按回车键退出..." << std::endl;
     std::cin.get(); // 等待用户输入回车
     return EXIT_SUCCESS;

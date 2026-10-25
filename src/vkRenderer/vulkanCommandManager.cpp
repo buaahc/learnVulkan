@@ -4,6 +4,7 @@
 VulkanCommandManager::VulkanCommandManager(std::shared_ptr<VulkanContext> context)
 {
 	this->_vkContext = context;
+    this->createCommandPool();
 }
 
 void VulkanCommandManager::createCommandPool()
@@ -21,7 +22,7 @@ void VulkanCommandManager::createCommandPool()
     /**
     * 命令缓冲区通过提交到设备队列来执行，不同的队列执行的任务不同（有的处理图形，有的处理计算，有的处理内存传输）。
     * 限制：一个命令池只能为特定的一种队列族创建命令缓冲区，_graphicsAndComputeFamily 这个队列族即可以绘制图形又可以用于计算着色器。
-    * 这里使用了 _graphicsFamily（图形队列族），说明从这个池里创建出来的命令，将来是发给 GPU 用来画图的。
+    * 这里使用了 _graphicsAndComputeFamily（图形和计算队列族），说明从这个池里创建出来的命令，将来是发给 GPU 用来画图和计算的。
     */
     poolInfo.queueFamilyIndex = this->_vkContext->getPhysicalQueueFamilyIndices()._graphicsAndComputeFamily.value();
     //创建命令池
@@ -36,7 +37,6 @@ std::vector<VkCommandBuffer>  VulkanCommandManager::createCommandBuffers(uint32_
     //Allocate 意味着从已经存在的资源池（Command Pool）中“拨”出一块内存。这样非常高效，因为命令池已经预先管理好了内存。
 
     std::vector<VkCommandBuffer> commandBuffers(count);
-
     VkCommandBufferAllocateInfo allocInfo{};
     allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     allocInfo.commandPool = this->_commandPool;
@@ -96,5 +96,4 @@ void VulkanCommandManager::endSingleTimeCommands(VkCommandBuffer commandBuffer) 
 void VulkanCommandManager::cleanup() {
     //请记住，当释放命令池时，命令缓冲区也会被释放，因此无需对命令缓冲区进行任何额外的清理工作。
     vkDestroyCommandPool(this->_vkContext->getLogicDevice(), this->_commandPool, nullptr);
-
 }

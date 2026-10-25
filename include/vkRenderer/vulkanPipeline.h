@@ -1,4 +1,4 @@
-// vulkanPipeline.h (æ¶æ„è‰æ¡ˆï¼Œè¯·å‚è€ƒ)
+// vulkanPipeline.h (¼Ü¹¹²İ°¸£¬Çë²Î¿¼)
 #pragma once
 #include <vulkan/vulkan.h>
 #include <string>
@@ -7,84 +7,135 @@
 
 class VulkanContext;
 
-// è¿™æ˜¯ä¸€ä¸ªçº¯æ•°æ®ç»“æ„ï¼Œä¿å­˜äº†åˆ›å»ºç®¡çº¿æ‰€éœ€çš„æ‰€æœ‰è“å›¾ä¿¡æ¯
+// ÕâÊÇÒ»¸ö´¿Êı¾İ½á¹¹£¬±£´æÁË´´½¨¹ÜÏßËùĞèµÄËùÓĞÀ¶Í¼ĞÅÏ¢
 struct PipelineConfigInfo {
-    // ç¦æ­¢æ‹·è´ï¼Œå› ä¸ºæœ‰äº›ç»“æ„ä½“å†…éƒ¨åŒ…å«æŒ‡é’ˆï¼Œæµ…æ‹·è´ä¼šå‡ºé—®é¢˜
-    PipelineConfigInfo(const PipelineConfigInfo&) = delete;
-    PipelineConfigInfo& operator=(const PipelineConfigInfo&) = delete;
-    // default å‘Šè¯‰ç¼–è¯‘å™¨ç”Ÿæˆé»˜è®¤çš„ï¼Œæ— å‚æ•°çš„æ„é€ å‡½æ•°
+    // default ¸æËß±àÒëÆ÷Éú³ÉÄ¬ÈÏµÄ£¬ÎŞ²ÎÊıµÄ¹¹Ôìº¯Êı
     PipelineConfigInfo() = default;
 
-    //ç»‘å®šé¡¶ç‚¹ç¼“å†²åŒºæè¿°
-    std::vector<VkVertexInputBindingDescription> bindingDescriptions{};
-    //ç»‘å®šé¡¶ç‚¹ç¼“å†²åŒºå±æ€§æè¿°
-    std::vector<VkVertexInputAttributeDescription> attributeDescriptions{};
+    //°ó¶¨¶¥µã»º³åÇøÃèÊö
+    std::vector<VkVertexInputBindingDescription> _bindingDescriptions{};
+    //°ó¶¨¶¥µã»º³åÇøÊôĞÔÃèÊö
+    std::vector<VkVertexInputAttributeDescription> _attributeDescriptions{};
 
-    VkPipelineViewportStateCreateInfo viewportInfo{};
+    //»º³åÇøÃèÊö--ÃèÊöÁË½«´«µİ¸ø¶¥µã×ÅÉ«Æ÷µÄ»º³åÇø
+    //°Ñ°üº¬¶¥µãÊı¾İµÄ»º³åÇø£¨VkBuffer£©ÕûÌåÃèÊö°ó¶¨µ½¹ÜÏßÉÏ£¬
+    VkPipelineVertexInputStateCreateInfo vertexInputInfo{};
+
+    //»æÖÆµÄÍ¼ÔªÀàĞÍ-¼´glDrawArray/glDrawElementº¯ÊıÖĞµÄµÚÒ»¸ö²ÎÊı£¬»æÖÆÖ¸ÁîvkDrawCmd/vkCmdDrawIndexed²¢²»Ö¸¶¨Í¼ÔªÀàĞÍ
     VkPipelineInputAssemblyStateCreateInfo inputAssemblyInfo{};
+
+    //ÊÓ¿ÚÓë²ÃÇĞÏà¹Ø
+    VkPipelineViewportStateCreateInfo viewportInfo{};
+
+    //¹âÕ¤»¯Ïà¹Ø
     VkPipelineRasterizationStateCreateInfo rasterizationInfo{};
+
+    //¶àÖØ²ÉÑù-ÓÃÓÚ¿¹¾â³İ
     VkPipelineMultisampleStateCreateInfo multisampleInfo{};
+
+    //ÑÕÉ«»ìºÏ-Õë¶ÔäÖÈ¾×ÓÍ¨µÀÖĞµÄÖ¡»º³å¸½¼ş£¬ÉèÖÃÆäÊÇ·ñÍ¸Ã÷
+    /**
+    * glEnable(GL_BLEND);
+    * glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    * glBlendEquation(GL_FUNC_ADD);
+    */
+    //Èç¹û×ÓÍ¨µÀÓĞ¶à¸ö¸½¼ş£¨MRT£©£¬ÄÇ´Ë´¦¾ÍĞèÒª´´½¨¶à¸ö¶ÔÓ¦µÄVkPipelineColorBlendAttachmentState£¬ÒÔ±ã¶ÔÃ¿¸öÊä³ö¸½¼ş½øĞĞ»ìºÏÉèÖÃ
+    //td::array<VkPipelineColorBlendAttachmentState, 3> blendAttachments{};//Ë³ĞòÓëMRTË³ĞòÒªÍêÈ«Ò»ÖÂ
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     VkPipelineColorBlendStateCreateInfo colorBlendInfo{};
+
+    //Éî¶ÈÓëÄ£°å»º³åÇøÏà¹Ø
     VkPipelineDepthStencilStateCreateInfo depthStencilInfo{};
+
+
+    //ÊÓ¿ÚÓë²ÃÇĞ²âÊÔ-ÔÊĞí¶¯Ì¬×´Ì¬ĞŞ¸Ä£¬äÖÈ¾¹ı³ÌÖĞ¿ÉĞŞ¸Ä
+    /**
+    * Ç°ÃæËµ¹ı£¬Vulkan ¼¸ºõËùÓĞµÄ×´Ì¬¶¼ÒªÌáÇ°ºæ±º£¬Èç¹ûÄãµ÷ÕûÁË´°¿Ú´óĞ¡£¬ÊÓ¿Ú£¨Viewport£©¸Ä±äÁË£¬ÄÑµÀÒªÏú»Ù²¢ÖØĞÂ´´½¨Ò»¸öÅÓ´óµÄ¹ÜÏßÂğ£¿
+    * ÎªÁË½â¾öÕâ¸öÎÊÌâ£¬Vulkan ÔÊĞíÉÙÊı×´Ì¬±»±ê¼ÇÎª¡°¶¯Ì¬µÄ¡±£¬ÕâÀï½«ÊÓ¿ÚºÍ²Ã¼ô¿òÉèÎª¶¯Ì¬£¬
+    * ÒâÎ¶×Å¿ÉÒÔÔÚäÖÈ¾Ê±£¨Command BufferÖĞ£©µ÷ÓÃ vkCmdSetViewport ËæÊ±¸Ä±äËüÃÇµÄ´óĞ¡£¬¶øÎŞĞèÖØ½¨¹ÜÏß¡£
+    */
     std::vector<VkDynamicState> dynamicStateEnables{};
     VkPipelineDynamicStateCreateInfo dynamicStateInfo{};
 
-    // ç®¡çº¿å¸ƒå±€ï¼šå†³å®šäº† Shader æ€ä¹ˆæ¥æ”¶å¤–éƒ¨æ•°æ® (UBO/Texture)
+#if 0
+    // ¹ÜÏß²¼¾Ö£º¾ö¶¨ÁË Shader ÔõÃ´½ÓÊÕÍâ²¿Êı¾İ (UBO/Texture)
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
-    // æ¸²æŸ“é€šé“ï¼šç®¡çº¿å¿…é¡»çŸ¥é“å®ƒåœ¨å“ªå¼ ç”»å¸ƒä¸Šå·¥ä½œ
+    // äÖÈ¾Í¨µÀ£º¹ÜÏß±ØĞëÖªµÀËüÔÚÄÄÕÅ»­²¼ÉÏ¹¤×÷
     VkRenderPass renderPass = VK_NULL_HANDLE;
     uint32_t subpass = 0;
+#endif // 0
+
+    //ÉèÖÃÍ¼ÔªÀàĞÍ
+    void setInputAssemblyTopology(VkPrimitiveTopology vkPrimitiveTopology);
+    void setMsaaSampler(VkSampleCountFlagBits msaaSampler);
+    void setBlendState(bool blend);
+    void setDepthTestState(bool testDepth, bool wirteDepth);
+
+    void setVertexBindingDescription(std::vector<VkVertexInputBindingDescription> bindingDescriptions,
+        std::vector<VkVertexInputAttributeDescription> attributeDescriptions);
 };
 
 class VulkanPipeline {
 public:
-    // æ„é€ å‡½æ•°ï¼šè´Ÿè´£è¯»å– shader æ–‡ä»¶ï¼Œå¹¶æ ¹æ® configInfo åˆ›å»ºçœŸæ­£çš„ç¡¬ä»¶ç®¡çº¿
+    // ¹¹Ôìº¯Êı£º¸ºÔğ¶ÁÈ¡ shader ÎÄ¼ş£¬²¢¸ù¾İ configInfo ´´½¨ÕæÕıµÄÓ²¼ş¹ÜÏß
     VulkanPipeline(
         std::shared_ptr<VulkanContext> context,
         const std::string& vertFilepath,
         const std::string& fragFilepath,
-        const PipelineConfigInfo& configInfo
-    );
+        const PipelineConfigInfo& configInfo,
+        VkDescriptorSetLayout descriptorSetLayout,
+        VkRenderPass renderPass,
+        uint32_t subpass);
 
-    // (å¯é€‰) ä¸“é—¨ä¸º Compute Shader å‡†å¤‡çš„æ„é€ å‡½æ•°
+    // (¿ÉÑ¡) ×¨ÃÅÎª Compute Shader ×¼±¸µÄ¹¹Ôìº¯Êı
     VulkanPipeline(
         std::shared_ptr<VulkanContext> context,
         const std::string& compFilepath,
-        VkPipelineLayout pipelineLayout
-    );
+        VkDescriptorSetLayout descriptorSetLayout);
 
     ~VulkanPipeline();
 
-    // ç¦ç”¨æ‹·è´è¯­ä¹‰
+    // ½ûÓÃ¿½±´ÓïÒå
     VulkanPipeline(const VulkanPipeline&) = delete;
     VulkanPipeline& operator=(const VulkanPipeline&) = delete;
 
-    // ----- æ ¸å¿ƒæ“ä½œ -----
+    // ----- ºËĞÄ²Ù×÷ -----
+    // ½«´Ë¹ÜÏß°ó¶¨µ½µ±Ç°µÄ CommandBuffer ÉÏ (Ìæ»» vkCmdBindPipeline)
+    void bindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint bindPoint);
 
-    // å°†æ­¤ç®¡çº¿ç»‘å®šåˆ°å½“å‰çš„ CommandBuffer ä¸Š (æ›¿æ¢ vkCmdBindPipeline)
-    void bind(VkCommandBuffer commandBuffer, VkPipelineBindPoint bindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS);
+    // »ñÈ¡µ×²ã¾ä±ú (Ò»°ã²»ĞèÒª£¬ÒòÎªÌá¹©ÁË bind ·½·¨)
+    VkPipeline getPipeline() const { return _vkPipeline; }
 
-    // è·å–åº•å±‚å¥æŸ„ (ä¸€èˆ¬ä¸éœ€è¦ï¼Œå› ä¸ºæä¾›äº† bind æ–¹æ³•)
-    VkPipeline getPipeline() const { return _graphicsPipeline; }
-
-    // ----- æå…¶æ–¹ä¾¿çš„é…ç½®ç”Ÿæˆå™¨ (å·¥å‚æ–¹æ³•) -----
-
-    // ç”Ÿæˆä¸€å¥—æ ‡å‡†çš„ã€ç”¨æ¥ç”» 3D æ¨¡å‹çš„é»˜è®¤é…ç½®ï¼ˆå¼€å¯æ·±åº¦æµ‹è¯•ï¼Œä¸‰è§’å½¢æ‹“æ‰‘ï¼‰
+    // ----- ¼«Æä·½±ãµÄÅäÖÃÉú³ÉÆ÷ (¹¤³§·½·¨) -----
+    // Éú³ÉÒ»Ì×±ê×¼µÄ¡¢ÓÃÀ´»­ 3D Ä£ĞÍµÄÄ¬ÈÏÅäÖÃ£¨¿ªÆôÉî¶È²âÊÔ£¬Èı½ÇĞÎÍØÆË
     static void defaultPipelineConfigInfo(PipelineConfigInfo& configInfo);
 
-    // ç”Ÿæˆä¸€å¥—ç”¨æ¥ç”»ç²’å­ç³»ç»Ÿçš„ç‰¹æ®Šé…ç½®ï¼ˆå…³é—­æ·±åº¦æµ‹è¯•ï¼Œç‚¹æ‹“æ‰‘ï¼‰
+    // Éú³ÉÒ»Ì×ÓÃÀ´»­Á£×ÓÏµÍ³µÄÌØÊâÅäÖÃ£¨¹Ø±ÕÉî¶È²âÊÔ£¬µãÍØÆË£©
     static void particlePipelineConfigInfo(PipelineConfigInfo& configInfo);
 
+    std::string vertFilepath();
+    std::string fragFilepath();
+    std::string compFilepath();
+
+    VkPipelineLayout getPipelineLayout();
 private:
     std::shared_ptr<VulkanContext> _vkContext;
-    VkPipeline _graphicsPipeline = VK_NULL_HANDLE;
+    VkPipeline _vkPipeline = VK_NULL_HANDLE;
 
-    // ä¸´æ—¶æŒæœ‰çš„ Shader Moduleï¼Œç®¡çº¿åˆ›å»ºå®Œå³å¯é”€æ¯
-    VkShaderModule _vertShaderModule = VK_NULL_HANDLE;
-    VkShaderModule _fragShaderModule = VK_NULL_HANDLE;
+    std::string _vertFilepath = "";
+    std::string _fragFilepath = "";
+    std::string _compFilepath = "";
 
-    // ç§æœ‰è¾…åŠ©æ–¹æ³•
-    std::vector<char> readFile(const std::string& filepath);
-    void createShaderModule(const std::vector<char>& code, VkShaderModule* shaderModule);
+    PipelineConfigInfo _pipelineConfigInfo;
+
+    VkDescriptorSetLayout _descriptorSetLayout = VK_NULL_HANDLE;
+    VkPipelineLayout _pipelineLayout = VK_NULL_HANDLE;
+
+    VkRenderPass _renderPass = VK_NULL_HANDLE;
+    uint32_t _subpass = 0;
+
+
+    // Ë½ÓĞ¸¨Öú·½·¨
+    void createPipeline();
+    void createComputePipeline();
 };

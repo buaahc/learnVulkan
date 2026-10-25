@@ -66,4 +66,8 @@ namespace vkDB
 
     //模板格式？
     bool hasStencilComponent(VkFormat format);
+
+    VkShaderModule createShaderModule(
+        const std::vector<char>& code,
+        VkDevice logicDevice);
 }

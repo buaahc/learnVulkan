@@ -67,7 +67,6 @@ VkVertexInputBindingDescription Vertex::getBindingDescription() {
     bindingDescription.stride = sizeof(Vertex);//步长，每次读取数据的步长
     bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//每个顶点步进一次，如果是实例化数组将是每个实例步进一次
     return bindingDescription;
-
     /*
     // 描述 0 号槽位怎么读
         bindingDescription0.binding = 0;
@@ -80,7 +79,6 @@ VkVertexInputBindingDescription Vertex::getBindingDescription() {
     // 稍后绑定的时候同时插入两个槽位：
         vkCmdBindVertexBuffers(commandBuffer, 0, 2, {posBuffer, normalBuffer}, {0, 0});
     */
-
 }
 
 //顶点属性描述--描述缓冲区中每个顶点内部的具体数据字段（例如：位置、颜色、法线等），以及它们如何与着色器（GLSL）中的 layout(location = x) 对应。
@@ -249,6 +247,8 @@ void HelloTriangleApplication::cleanup() {
     for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         vkDestroyBuffer(this->_logicDevice, this->_uniformBuffers[i], nullptr);
         vkFreeMemory(this->_logicDevice, this->_uniformBuffersMemory[i], nullptr);
+        vkDestroyBuffer(this->_logicDevice, this->_uniformBuffersLoadModel[i], nullptr);
+        vkFreeMemory(this->_logicDevice, this->_uniformBuffersMemoryLoadModel[i], nullptr);    
     }
 
     vkDestroyDescriptorSetLayout(this->_logicDevice, this->_descriptorSetLayout, nullptr);
@@ -274,6 +274,9 @@ void HelloTriangleApplication::cleanup() {
 
     vkDestroyPipeline(this->_logicDevice, this->_computePipeline, nullptr);
     vkDestroyPipelineLayout(this->_logicDevice, this->_computePipelineLayout, nullptr);
+
+    vkDestroyPipeline(this->_logicDevice, this->_loadModelPipeline, nullptr);
+    vkDestroyPipelineLayout(this->_logicDevice, this->_loadModelPipelineLayout, nullptr);
 
     vkDestroyRenderPass(this->_logicDevice, this->_renderPass, nullptr);
 
@@ -1393,8 +1396,7 @@ void HelloTriangleApplication::createGraphicsPipeline()
     VkGraphicsPipelineCreateInfo pipelineInfo{};
     pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
     pipelineInfo.stageCount = 2;
-    //引用着色器功能
-    pipelineInfo.pStages = shaderStages;
+    pipelineInfo.pStages = shaderStages;//引用着色器功能
     //引用所有的固定功能
     pipelineInfo.pVertexInputState = &vertexInputInfo;
     pipelineInfo.pInputAssemblyState = &inputAssembly;
@@ -1571,7 +1573,7 @@ void HelloTriangleApplication::createLoadModelPipeline() {
     pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipelineLayoutInfo.setLayoutCount = 1;
     //ubo/imageSamplers等全局变量描述符绑定到管线
-    ////重点：描述符图纸绑定给管线，管线就知道ubo/texture长什么样了，(这对应了 GLSL 着色器里的 layout(binding = 0) uniform UBO { ... } 和 layout(binding = 1) uniform sampler2D texSampler;)
+    //重点：描述符图纸绑定给管线，管线就知道ubo/texture长什么样了，(这对应了 GLSL 着色器里的 layout(binding = 0) uniform UBO { ... } 和 layout(binding = 1) uniform sampler2D texSampler;)
     pipelineLayoutInfo.pSetLayouts = &this->_descriptorSetLayout;
     pipelineLayoutInfo.pushConstantRangeCount = 0; // Optional
     pipelineLayoutInfo.pPushConstantRanges = nullptr; // Optional
@@ -2162,7 +2164,11 @@ void HelloTriangleApplication::createIndexBuffer()
     VkDeviceMemory stagingBufferMemory;
     // 1. VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT：CPU 可以通过映射(Mapping)访问这块内存。
     // 2. VK_MEMORY_PROPERTY_HOST_COHERENT_BIT：内存连贯性。保证 CPU 写入后 GPU 立即能看到，不需要手动调用 vkFlushMappedMemoryRanges 刷新缓存。
-    createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+    createBuffer(bufferSize, 
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+        stagingBuffer, 
+        stagingBufferMemory);
 
     void* data;
     vkMapMemory(this->_logicDevice, stagingBufferMemory, 0, bufferSize, 0, &data);

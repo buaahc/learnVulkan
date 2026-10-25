@@ -63,6 +63,8 @@ public:
 
     void cleanup();
 
+    double getFrameTime();
+
     bool _framebufferResized = false;
 
 private:
