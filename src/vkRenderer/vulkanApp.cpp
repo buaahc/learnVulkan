@@ -36,16 +36,20 @@ void VulkanApp::initVulkan()
     this->_vkDescriptorManager = std::make_shared<VulkanDescriptorManager>(this->_vkContext);
     this->_vkDescriptorBuilder = std::make_shared<VulkanDescriptorBuilder>(this->_vkContext, this->_vkDescriptorManager);
 
-#if 0
-    std::shared_ptr<VulkanContext> _context;
-    std::shared_ptr<VulkanCommandManager> _commandManager;
-    std::shared_ptr<VulkanSwapChain> _swapChain;
 
-    // =====================================
-    // 2. 描述符系统 (资源管家)
-    // =====================================
-    std::shared_ptr<VulkanDescriptorManager> _descriptorManager;
-#endif // 0
+    this->createTexture();
+    this->createModel();
+    this->createParticleSystem(PARTICLE_COUNT);
+
+    this->createUniformBuffers();
+
+    this->createModelDescriptorSets();
+    this->createComputeDescriptorSets();
+    this->createModelPipeline();
+    this->createParticleGraphicsPipeline();
+    this->createComputePipeline();
+    this->createCommandBuffer();
+    this->createSyncObjects();
 }
 
 void VulkanApp::mainLoop()
@@ -66,7 +70,6 @@ void VulkanApp::mainLoop()
 
 void VulkanApp::cleanup()
 {
-
 }
 
 void VulkanApp::run() {
@@ -84,12 +87,22 @@ void VulkanApp::createUniformBuffers()
     {
         {
             VkDeviceSize bufferSize = sizeof(UniformBufferObject_LoadModel);
-            std::shared_ptr<VulkanBuffer>uboBuffer = std::make_shared<VulkanBuffer>(this->_vkContext, this->_vkCommandManager, bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            std::shared_ptr<VulkanBuffer>uboBuffer = std::make_shared<VulkanBuffer>(
+                this->_vkContext, 
+                this->_vkCommandManager, 
+                bufferSize, 
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             this->_modelUboBuffers.push_back(uboBuffer);
         }
         {
             VkDeviceSize bufferSize = sizeof(UniformBufferObject);
-            std::shared_ptr<VulkanBuffer>uboBuffer = std::make_shared<VulkanBuffer>(this->_vkContext, this->_vkCommandManager, bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            std::shared_ptr<VulkanBuffer>uboBuffer = std::make_shared<VulkanBuffer>(
+                this->_vkContext, 
+                this->_vkCommandManager,
+                bufferSize, 
+                VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
             this->_particleUboBuffers.push_back(uboBuffer);
         }
     }
@@ -110,7 +123,7 @@ void VulkanApp::updateUniformBuffer(uint32_t currentImage)
         }
 
         {
-            std::shared_ptr<VulkanBuffer> uboBuffer = this->_particleUboBuffers.at(currentImage);
+            std::shared_ptr<VulkanBuffer> uboBuffer = this->_modelUboBuffers.at(currentImage);
             if (uboBuffer)
             {
                 static auto startTime = std::chrono::high_resolution_clock::now();
@@ -212,7 +225,7 @@ void VulkanApp::createModelDescriptorSets()
 #endif // 0
     if (!this->_vkDescriptorBuilder)
         return;
-    this->_vkDescriptorBuilder->reset();
+    //this->_vkDescriptorBuilder->reset();
     this->_modelDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
     for (unsigned int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
@@ -237,12 +250,11 @@ void VulkanApp::createModelDescriptorSets()
     }
 }
 
-void VulkanApp::createParticleDescriptorSets()
+void VulkanApp::createComputeDescriptorSets()
 {
     if (!this->_vkDescriptorBuilder)
         return;
-    this->_vkDescriptorBuilder->reset();
-    this->_particleComputeDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    this->_computeDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
     for (unsigned int i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
         {
@@ -269,7 +281,7 @@ void VulkanApp::createParticleDescriptorSets()
             bufferInfo.range = this->_shaderStorageBuffers[i]->getBufferSize();
             this->_vkDescriptorBuilder->bindBuffer(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, &bufferInfo);
         }
-        this->_vkDescriptorBuilder->build(this->_particleComputeDescriptorSets[i], this->_particleComputeDescriptorLayout);
+        this->_vkDescriptorBuilder->build(this->_computeDescriptorSets[i], this->_computeDescriptorLayout);
     }
 }
 
@@ -293,12 +305,6 @@ void VulkanApp::createModel()
 
 void VulkanApp::createParticleSystem(uint32_t particleCount)
 {
-   /* std::shared_ptr<VulkanContext> context,
-        std::shared_ptr<VulkanCommandManager> commandManager,
-        uint32_t particleCount,
-        const uint32_t screenWidth,
-        const uint32_t screenHeight,
-        int maxFrameInFlight*/
     this->_particleSystem = std::make_shared<VulkanParticleSystem>(
         this->_vkContext,
         this->_vkCommandManager,
@@ -318,9 +324,8 @@ void VulkanApp::createModelPipeline()
     std::string fragFilepath = exeDir + "/resources/shaders/frag.spv";
 
     PipelineConfigInfo pipelineConfigInfo;
-    VulkanPipeline::defaultPipelineConfigInfo(pipelineConfigInfo);
+    VulkanPipeline::defaultPipelineConfigInfo(pipelineConfigInfo, this->_vkContext->getMsaaSamples());
     pipelineConfigInfo.setVertexBindingDescription({ Vertex::getBindingDescription() }, { Vertex::getAttributeDescriptions() });
-
 
     this->_modelPipeline = std::make_shared<VulkanPipeline>(
         this->_vkContext,
@@ -340,7 +345,7 @@ void VulkanApp::createParticleGraphicsPipeline()
     std::string fragFilepath = exeDir + "/resources/shaders/computefrag.spv";
 
     PipelineConfigInfo pipelineConfigInfo;
-    VulkanPipeline::particlePipelineConfigInfo(pipelineConfigInfo);
+    VulkanPipeline::particlePipelineConfigInfo(pipelineConfigInfo, this->_vkContext->getMsaaSamples());
     pipelineConfigInfo.setVertexBindingDescription({ Particle::getBindingDescription() }, { Particle::getAttributeDescriptions() });
 
     this->_particleGraphicsPipeline = std::make_shared<VulkanPipeline>(
@@ -354,14 +359,14 @@ void VulkanApp::createParticleGraphicsPipeline()
 }
 
 //粒子计算管线
-void VulkanApp::createParticleComputePipeline()
+void VulkanApp::createComputePipeline()
 {
     std::string exeDir = getExeDirectory();
     std::string compFilepath = exeDir + "/resources/shaders/Comp.spv";
-    this->_particleComputePipeline = std::make_shared<VulkanPipeline>(
+    this->_computePipeline = std::make_shared<VulkanPipeline>(
         this->_vkContext,
         compFilepath,
-        this->_particleComputeDescriptorLayout);
+        this->_computeDescriptorLayout);
 }
 
 void VulkanApp::createCommandBuffer()
@@ -437,10 +442,10 @@ void VulkanApp::recordCommandBuffer(
 
 
     // 首先绘制模型
-    // 绑定vkPipeline
-    // 绑定Vertex Buffer (比如 _vertexBuffer)
-    // 绑定Index Buffer (比如 _indexBuffer)
-    // 绑定Descriptor Set (比如 _descriptorSets[imageIndex])
+    // bind vkPipeline
+    // bind Vertex Buffer (比如 _vertexBuffer)
+    // bind Index Buffer (比如 _indexBuffer)
+    // bind Descriptor Set (比如 _descriptorSets[imageIndex])
     // draw
     {
         this->_modelPipeline->bindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS);
@@ -477,15 +482,20 @@ void VulkanApp::recordComputeCommandBuffer(VkCommandBuffer commandBuffer)
     if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
         throw std::runtime_error("failed to begin recording compute command buffer!");
     }
-
-    this->_particleComputePipeline->bindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE);
+    
+    //bind pipeline
+    //bind DescriptorSets
+    //draw
+    //计算着色器不绘制图形，无需bind buffer
+    //=========================================================================================
+    this->_computePipeline->bindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE);
 
     vkCmdBindDescriptorSets(
         commandBuffer, 
         VK_PIPELINE_BIND_POINT_COMPUTE, 
-        this->_particleComputePipeline->getPipelineLayout(),
+        this->_computePipeline->getPipelineLayout(),
         0, 1,
-        &this->_particleComputeDescriptorSets[this->_currentFrame],
+        &this->_computeDescriptorSets[this->_currentFrame],
         0, nullptr);
 
     //draw

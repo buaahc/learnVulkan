@@ -197,7 +197,7 @@ VkPipelineLayout VulkanPipeline::getPipelineLayout()
     return this->_pipelineLayout;
 }
 
-void VulkanPipeline::defaultPipelineConfigInfo(PipelineConfigInfo& configInfo)
+void VulkanPipeline::defaultPipelineConfigInfo(PipelineConfigInfo& configInfo, VkSampleCountFlagBits msaaSampler)
 {
     //绘制的图元类型-即glDrawArray/glDrawElement函数中的第一个参数，绘制指令vkDrawCmd/vkCmdDrawIndexed并不指定图元类型
     configInfo.inputAssemblyInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -223,8 +223,7 @@ void VulkanPipeline::defaultPipelineConfigInfo(PipelineConfigInfo& configInfo)
     //多重采样-用于抗锯齿
     configInfo.multisampleInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     configInfo.multisampleInfo.sampleShadingEnable = VK_FALSE;//样本着色
-    configInfo.multisampleInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
+    configInfo.multisampleInfo.rasterizationSamples = msaaSampler;
 
     //启用深度测试
     configInfo.depthStencilInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -274,9 +273,9 @@ void VulkanPipeline::defaultPipelineConfigInfo(PipelineConfigInfo& configInfo)
     configInfo.dynamicStateInfo.pDynamicStates = configInfo.dynamicStateEnables.data();
 }
 
-void VulkanPipeline::particlePipelineConfigInfo(PipelineConfigInfo& configInfo)
+void VulkanPipeline::particlePipelineConfigInfo(PipelineConfigInfo& configInfo, VkSampleCountFlagBits msaaSampler)
 {
-    VulkanPipeline::defaultPipelineConfigInfo(configInfo);
+    VulkanPipeline::defaultPipelineConfigInfo(configInfo, msaaSampler);
     configInfo.setInputAssemblyTopology(VkPrimitiveTopology::VK_PRIMITIVE_TOPOLOGY_POINT_LIST);
     configInfo.setBlendState(true);
     configInfo.setDepthTestState(false, false);

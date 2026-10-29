@@ -108,10 +108,10 @@ public:
 
     // ----- 极其方便的配置生成器 (工厂方法) -----
     // 生成一套标准的、用来画 3D 模型的默认配置（开启深度测试，三角形拓扑
-    static void defaultPipelineConfigInfo(PipelineConfigInfo& configInfo);
+    static void defaultPipelineConfigInfo(PipelineConfigInfo& configInfo, VkSampleCountFlagBits msaaSampler);
 
     // 生成一套用来画粒子系统的特殊配置（关闭深度测试，点拓扑）
-    static void particlePipelineConfigInfo(PipelineConfigInfo& configInfo);
+    static void particlePipelineConfigInfo(PipelineConfigInfo& configInfo, VkSampleCountFlagBits msaaSampler);
 
     std::string vertFilepath();
     std::string fragFilepath();
@@ -119,8 +119,10 @@ public:
 
     VkPipelineLayout getPipelineLayout();
 private:
-    std::shared_ptr<VulkanContext> _vkContext;
     VkPipeline _vkPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout _pipelineLayout = VK_NULL_HANDLE;
+
+    std::shared_ptr<VulkanContext> _vkContext;
 
     std::string _vertFilepath = "";
     std::string _fragFilepath = "";
@@ -129,8 +131,6 @@ private:
     PipelineConfigInfo _pipelineConfigInfo;
 
     VkDescriptorSetLayout _descriptorSetLayout = VK_NULL_HANDLE;
-    VkPipelineLayout _pipelineLayout = VK_NULL_HANDLE;
-
     VkRenderPass _renderPass = VK_NULL_HANDLE;
     uint32_t _subpass = 0;
 

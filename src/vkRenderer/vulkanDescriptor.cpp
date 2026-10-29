@@ -224,6 +224,7 @@ bool VulkanDescriptorBuilder::build(
         //this->_descriptorSetLayout是上面 layout(binding = X)槽位的集合
         if (vkCreateDescriptorSetLayout(this->_vkContext->getLogicDevice(), &layoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS) {
             throw std::runtime_error("failed to create descriptor set layout!");
+            this->reset();
             return false;
         }
     }
@@ -235,8 +236,10 @@ bool VulkanDescriptorBuilder::build(
             this->_writes.at(i).dstSet = descriptorSet;
         }
         vkUpdateDescriptorSets(this->_vkContext->getLogicDevice(), static_cast<uint32_t>(this->_writes.size()), this->_writes.data(), 0, nullptr);
+        this->reset();
         return true;
     }
+    this->reset();
     return false;
 }
 

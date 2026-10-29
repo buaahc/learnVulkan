@@ -45,7 +45,7 @@ private:
 
 
     void createModelDescriptorSets();
-    void createParticleDescriptorSets();
+    void createComputeDescriptorSets();
 
     void createTexture();
     void createModel();
@@ -53,7 +53,7 @@ private:
 
     void createModelPipeline();
     void createParticleGraphicsPipeline();
-    void createParticleComputePipeline();
+    void createComputePipeline();
 
     void createCommandBuffer();
 
@@ -84,8 +84,8 @@ private:
     std::vector<VkDescriptorSet> _modelDescriptorSets;
     VkDescriptorSetLayout _modelDescriptorLayout = VK_NULL_HANDLE;
     
-    std::vector<VkDescriptorSet> _particleComputeDescriptorSets;
-    VkDescriptorSetLayout _particleComputeDescriptorLayout = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> _computeDescriptorSets;
+    VkDescriptorSetLayout _computeDescriptorLayout = VK_NULL_HANDLE;
 
     // =====================================
     // 3. 业务资产 (Assets)
@@ -106,7 +106,7 @@ private:
     // =====================================
     std::shared_ptr<VulkanPipeline> _modelPipeline;
     std::shared_ptr<VulkanPipeline> _particleGraphicsPipeline; // 用于画粒子的 Graphics 管线
-    std::shared_ptr<VulkanPipeline> _particleComputePipeline;  // 用于算粒子的 Compute 管线
+    std::shared_ptr<VulkanPipeline> _computePipeline;  // 用于算粒子的 Compute 管线
 
     // =====================================
     // 5. 渲染循环必须品

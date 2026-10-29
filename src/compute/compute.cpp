@@ -3141,7 +3141,10 @@ void HelloTriangleApplication::createTextureSampler()
 * 5-之后渲染时，GPU 就只使用那个 OPTIMAL 布局的图像了。
 */
 
-VkFormat HelloTriangleApplication::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features) {
+VkFormat HelloTriangleApplication::findSupportedFormat(
+    const std::vector<VkFormat>& candidates, 
+    VkImageTiling tiling, 
+    VkFormatFeatureFlags features) {
     for (VkFormat format : candidates) {
         /**VkFormatProperties:
         * linearTilingFeatures线性平铺支持的用例

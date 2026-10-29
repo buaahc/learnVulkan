@@ -45,28 +45,29 @@ std::vector<VkVertexInputAttributeDescription> Particle::getAttributeDescription
         attributeDescriptions.push_back(attributeDescription);
     }
 
+
     {
         VkVertexInputAttributeDescription attributeDescription;
         //attributeDescription.binding表示从哪块缓冲区读取数据
         attributeDescription.binding = 0;//即上面VkVertexInputBindingDescription描述中，索引0的内存数据
         // attributeDescription.location表述数据传递给着色器中的location= x的变量
         attributeDescription.location = 1;//这个就是vertexShader--layout(location = 1)
-        attributeDescription.format = VK_FORMAT_R32G32_SFLOAT;
-        attributeDescription.offset = offsetof(Particle, _velocity);
-        attributeDescriptions.push_back(attributeDescription);
-    }
-
-    {
-        VkVertexInputAttributeDescription attributeDescription;
-        //attributeDescription.binding表示从哪块缓冲区读取数据
-        attributeDescription.binding = 0;//即上面VkVertexInputBindingDescription描述中，索引0的内存数据
-        // attributeDescription.location表述数据传递给着色器中的location= x的变量
-        attributeDescription.location = 2;//这个就是vertexShader--layout(location = 1)
         attributeDescription.format = VK_FORMAT_R32G32B32A32_SFLOAT;
         attributeDescription.offset = offsetof(Particle, _color);
         attributeDescriptions.push_back(attributeDescription);
     }
 
+    
+    //{
+    //    VkVertexInputAttributeDescription attributeDescription;
+    //    //attributeDescription.binding表示从哪块缓冲区读取数据
+    //    attributeDescription.binding = 0;//即上面VkVertexInputBindingDescription描述中，索引0的内存数据
+    //    // attributeDescription.location表述数据传递给着色器中的location= x的变量
+    //    attributeDescription.location = 1;//这个就是vertexShader--layout(location = 1)
+    //    attributeDescription.format = VK_FORMAT_R32G32_SFLOAT;
+    //    attributeDescription.offset = offsetof(Particle, _velocity);
+    //    attributeDescriptions.push_back(attributeDescription);
+    //}
     return attributeDescriptions;
 }
 
@@ -107,63 +108,3 @@ void VulkanParticleSystem::setShaderStorageBuffers(std::vector<std::shared_ptr<V
 {
     this->_shaderStorageBuffers = shaderStorageBuffers;
 }
-
-//void VulkanParticleSystem::initParticles(std::shared_ptr<VulkanCommandManager> commandManager)
-//{
-//    // Initialize particles
-//    std::default_random_engine rndEngine((unsigned)time(nullptr));
-//    std::uniform_real_distribution<float> rndDist(0.0f, 1.0f);
-//
-//    // Initial particle positions on a circle
-//    std::vector<Particle> particles(this->_particleCount);
-//    for (auto& particle : particles) {
-//        float r = 0.25f * sqrt(rndDist(rndEngine));
-//        float theta = rndDist(rndEngine) * 2 * 3.14159265358979323846;
-//        float x = r * cos(theta) * this->_screenHeight / this->_screenWidth;
-//        float y = r * sin(theta);
-//        particle._position = glm::vec2(x, y);
-//        particle._velocity = glm::normalize(glm::vec2(x, y)) * 0.00025f;
-//        particle._color = glm::vec4(rndDist(rndEngine), rndDist(rndEngine), rndDist(rndEngine), 1.0f);
-//    }
-//
-//    VkDeviceSize bufferSize = sizeof(Particle) * this->_particleCount;
-//    //数据暂存缓冲区
-//    VulkanBuffer vulkanBuffer(
-//        this->_vkContext,
-//        commandManager,
-//        bufferSize,
-//        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-//        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-//    vulkanBuffer.setBufferData(particles.data(), bufferSize, 0);
-//
-//    for (size_t i = 0; i < this->_maxFrameInFlight; i++) {
-//
-//        std::shared_ptr<VulkanBuffer> vulkanBufer = std::make_shared<VulkanBuffer>(
-//            this->_vkContext,
-//            commandManager,
-//            bufferSize,
-//            /**
-//            * VK_BUFFER_USAGE_STORAGE_BUFFER_BIT (存储缓冲区标志)
-//            * 用途：允许该缓冲区在着色器（Shader）中作为 存储缓冲区（Storage Buffer / SSBO） 被绑定和使用。
-//            * 特点：
-//            * 可读可写：与只能读取的统一缓冲区（Uniform Buffer, UBO）不同，着色器（特别是计算着色器 Compute Shader）可以随时读取和写入这种缓冲区。
-//            * 容量大：它通常用于传递或存储大量数据，不受 UBO 严格的大小限制。
-//            * 常见场景：在着色器中保存物理模拟的数据、存储游戏世界中所有对象的变换矩阵、或者作为计算着色器输出计算结果的地方。
-//            */
-//            VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-//            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-//        // Copy data from the staging buffer (host) to the shader storage buffer (GPU)
-//        vulkanBuffer.copyToBuffer(vulkanBufer->getBuffer());
-//        this->_shaderStorageBuffers.push_back(vulkanBufer);
-//    }
-//}
-//
-//VkDescriptorBufferInfo VulkanParticleSystem::getSSBOBufferInfo(uint32_t frameIndex) const
-//{
-//    //storageBufferInfoLastFrame/storageBufferInfoCurrentFrame保证0-1或者1-0
-//    VkDescriptorBufferInfo storageBufferInfoLastFrame{};
-//    storageBufferInfoLastFrame.buffer = this->_shaderStorageBuffers[frameIndex]->getBuffer();
-//    storageBufferInfoLastFrame.offset = 0;
-//    storageBufferInfoLastFrame.range = sizeof(Particle) * this->_particleCount;
-//    return storageBufferInfoLastFrame;
-//}
